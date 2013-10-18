@@ -1,0 +1,164 @@
+#slider-container {
+	background-color:#4d3c4c;
+	background-repeat:no-repeat;
+	background-position:center center;
+	width:100%;
+	margin-bottom:30px;
+}
+
+#slider {
+	margin:0 auto;
+}
+
+#slider-container #controller {
+	background:url(../images/controller.png);
+  position:absolute;
+  top:200px;
+  left:0;
+  z-index:10;
+	padding:10px 20px;
+}
+
+#slider-container #controller a {
+  color:#ffffff;
+  cursor:pointer;
+  display:block;
+}
+
+#slider-container #controller a:hover {
+	text-decoration:none;
+}
+
+#slider-container .button {
+	-webkit-box-shadow:none;
+	-moz-box-shadow:none;
+	box-shadow:none;   
+}
+
+.ls-container {
+	visibility: hidden;
+}
+
+.ls-inner {
+	position: relative;
+	background-position: center center;
+}
+
+.ls-inner,
+.ls-layer {
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+}
+
+.ls-layer {
+	position: absolute;
+	display: none;
+	background-position: center center;
+}
+
+.ls-layer * {
+	margin: 0px;
+	line-height: normal;
+}
+
+.ls-layer img {
+	min-width: none;
+	max-width: none;
+}
+
+.ls-active,
+.ls-animating {
+	display: block !important;
+}
+
+.ls-layer > * {
+	position: absolute;
+	left: 0px;
+	top: 0px;
+}
+
+.ls-layer .ls-bg {
+	left: 50%;
+	top: 50%;
+}
+
+.ls-bottom-nav-wrapper {
+	z-index: 2;
+	height: 0px;
+}
+
+.ls-bottom-nav-wrapper a,
+.ls-nav-prev,
+.ls-nav-next {
+	outline: none;
+}
+
+.ls-vpcontainer {
+	width: 100%;
+	height: 100%;
+	position: absolute;
+	left: 0px;
+	top: 0px;
+}
+
+.ls-videopreview {
+	width : 100%;
+	height : 100%;
+	position : absolute;
+	left : 0px;
+	top : 0px;
+	cursor : pointer;
+}
+
+.ls-playvideo {
+	background:url(../images/slider-skin.png) no-repeat;
+	background-position: -300px -150px;
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	cursor: pointer;
+	width: 50px;
+	height: 50px;
+	margin-left: -25px;
+	margin-top: -25px;
+}
+
+.ls-nav-prev, .ls-nav-next {
+	background-color:#eb5639;
+	background-repeat:no-repeat;
+	background-position:center center;
+	cursor:pointer;
+	display:none;
+	height:42px;
+	margin-top:-21px;
+	position:absolute;
+	top:50%;
+	width:42px;
+	z-index:100;
+}
+
+.ls-nav-prev {
+	background-image:url(../images/slider-prev.png);
+	left:0px;
+}
+
+.ls-nav-next {
+	background-image:url(../images/slider-next.png);
+	right:0px;
+}
+
+/* WP plugin forceResponsive */
+
+.ls-wp-forceresponsive-container {
+	width: 100%;
+	position: relative;
+}
+
+.ls-wp-forceresponsive-helper {
+	position: absolute;
+}
+
+#main {
+	overflow: visible !important;	
+}
