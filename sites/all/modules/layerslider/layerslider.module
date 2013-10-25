@@ -1,0 +1,2265 @@
+<?php
+
+/*
+ * @file
+ * Implements LayerSlider functionality.
+ *
+ * Entity definition is taken from entity_example.module. Better
+ * documentation can be found there for entity related functions.
+ *
+ */
+
+/**
+ * Impelements hook_init()
+ */
+function layerslider_init() {
+  $module_path = drupal_get_path('module', 'layerslider');
+  drupal_add_css($module_path . '/css/layerslider.css');
+  drupal_add_library('system', 'effects');
+  drupal_add_js($module_path . '/js/jquery-transit-modified.js');
+  // Uncomment below line to enable the new 2D&3D transitions
+  // drupal_add_js($module_path . '/js/layerslider.transitions.js');
+  drupal_add_js($module_path . '/js/layerslider.kreaturamedia.jquery.js');
+  drupal_add_js($module_path . '/js/init.js');
+  drupal_add_js(array('layerslider' => array('skinsPath' => url($module_path . '/skins/'))), 'setting'); 
+}
+
+/**
+ * Implements hook_entity_info().
+ */
+function layerslider_entity_info() {
+  $info['layerslider'] = array(
+    'label' => t('LayerSlider'),
+    'controller class' => 'LayerSliderController',
+    'base table' => 'layerslider_slider',
+    'uri callback' => 'layerslider_uri',
+    'fieldable' => FALSE,
+    'entity keys' => array(
+      'id' => 'id',
+      'bundle' => 'bundle_type'
+    ),
+    'bundle keys' => array(
+      'bundle' => 'bundle_type',
+    ),
+    'static cache' => TRUE,
+    'bundles' => array(
+      'standalone' => array(
+        'label' => 'Standalone slider',
+      ),
+      'views' => array(
+        'label' => 'Views slider'
+      ),
+    ),
+    'view modes' => array(
+      'full' => array(
+        'label' => t('Full'),
+        'custom settings' =>  FALSE,
+      ),
+    )
+  );
+
+  return $info;
+}
+
+/**
+ * Fetch a slider object.
+ *
+ * @param $id
+ *   Integer specifying the slider entity id.
+ * @param $reset
+ *   A boolean indicating that the internal cache should be reset.
+ * @return
+ *   A fully-loaded $slider object or FALSE if it cannot be loaded.
+ *
+ * @see layerslider_load_multiple()
+ * @see layerslider_menu()
+ */
+function layerslider_load($id = NULL, $reset = FALSE) {
+  $ids = (isset($id) ? array($id) : array());
+  $slider = layerslider_load_multiple($ids, array(), $reset);
+  return $slider ? reset($slider) : FALSE;
+}
+
+/**
+ * Loads multiple slider entities.
+ */
+function layerslider_load_multiple($ids = FALSE, $conditions = array(), $reset = FALSE) {
+  return entity_load('layerslider', $ids, $conditions, $reset);
+}
+
+/**
+ * Implements the uri callback.
+ */
+function layerslider_uri($slider) {
+  return array(
+    'path' => 'admin/structure/layerslider/' . $slider->id,
+  );
+}
+
+/**
+ * Save the entity by calling the controller.
+ */
+function layerslider_save(&$entity) {
+  return entity_get_controller('layerslider')->save($entity);
+}
+
+/**
+ * Use the controller to delete the entity.
+ */
+function layerslider_delete($entity) {
+  entity_get_controller('layerslider')->delete($entity);
+}
+
+/**
+ * LayerSliderControllerInterface definition.
+ *
+ * @see hook_entity_info_alter()
+ */
+interface LayerSliderControllerInterface
+  extends DrupalEntityControllerInterface {
+  public function create();
+  public function save($entity);
+  public function delete($entity);
+}
+
+/**
+ * LayerSliderController extends DrupalDefaultEntityController.
+ */
+class LayerSliderController
+  extends DrupalDefaultEntityController
+  implements LayerSliderControllerInterface {
+
+  public function load($ids = array(), $conditions = array()) {
+    $entities = array();
+
+    // Revisions are not statically cached, and require a different query to
+    // other conditions, so separate the revision id into its own variable.
+    if ($this->revisionKey && isset($conditions[$this->revisionKey])) {
+      $revision_id = $conditions[$this->revisionKey];
+      unset($conditions[$this->revisionKey]);
+    }
+    else {
+      $revision_id = FALSE;
+    }
+
+    // Create a new variable which is either a prepared version of the $ids
+    // array for later comparison with the entity cache, or FALSE if no $ids
+    // were passed. The $ids array is reduced as items are loaded from cache,
+    // and we need to know if it's empty for this reason to avoid querying the
+    // database when all requested entities are loaded from cache.
+    $passed_ids = !empty($ids) ? array_flip($ids) : FALSE;
+    // Try to load entities from the static cache, if the entity type supports
+    // static caching.
+    if ($this->cache && !$revision_id) {
+      $entities += $this->cacheGet($ids, $conditions);
+      // If any entities were loaded, remove them from the ids still to load.
+      if ($passed_ids) {
+        $ids = array_keys(array_diff_key($passed_ids, $entities));
+      }
+    }
+
+    // Load any remaining entities from the database. This is the case if $ids
+    // is set to FALSE (so we load all entities), if there are any ids left to
+    // load, if loading a revision, or if $conditions was passed without $ids.
+    if ($ids === FALSE || $ids || $revision_id || ($conditions && !$passed_ids)) {
+      // Build the query.
+      $query = $this->buildQuery($ids, $conditions, $revision_id);
+      $queried_entities = $query
+        ->execute()
+        ->fetchAllAssoc($this->idKey);
+
+      // Decode JSON blobs
+      foreach ($queried_entities as &$queried_entity) {
+        $queried_entity->properties = json_decode($queried_entity->properties);
+      }
+
+      // Build the layer query.
+      $layer_query = db_select('layerslider_layer', 'l')
+        ->fields('l')
+        ->orderBy('weight', 'ASC');
+      if (!empty($ids)) {
+        $layer_query->condition('id', $ids, 'IN');
+      }
+        
+      // Execute the layer query.
+      $queried_layers = $layer_query
+        ->execute()
+        ->fetchAllAssoc('lid');
+
+      // Assign layers to sliders and decode JSON blobs
+      foreach ($queried_layers as &$queried_layer) {
+        $queried_layer->properties = json_decode($queried_layer->properties);
+        $queried_entities[$queried_layer->id]->layers[$queried_layer->lid] = $queried_layer;
+      }
+
+      // Build the sublayer query.
+      $sublayer_query = db_select('layerslider_sublayer', 's')
+        ->fields('s');
+      if (!empty($ids)) {
+        $sublayer_query->condition('id', $ids, 'IN');
+      }
+        
+      // Execute the sublayer query.
+      $queried_sublayers = $sublayer_query
+        ->execute()
+        ->fetchAllAssoc('sid');
+
+      // Assign sublayers to layers and decode JSON blobs
+      foreach ($queried_sublayers as &$queried_sublayer) {
+        $queried_sublayer->properties = json_decode($queried_sublayer->properties);
+        $queried_sublayer->position = json_decode($queried_sublayer->position);
+        $queried_sublayer->content = json_decode($queried_sublayer->content);
+        $queried_entities[$queried_sublayer->id]->layers[$queried_sublayer->lid]->sublayers[$queried_sublayer->sid] = $queried_sublayer;
+      }
+
+      // Sort sublayers by z-index
+      if (!empty($queried_sublayers)) {
+        usort($queried_entities[$queried_sublayer->id]->layers[$queried_sublayer->lid]->sublayers, 'layerslider_sort_weight');
+      }
+    }
+
+    // Pass all entities loaded from the database through $this->attachLoad(),
+    // which attaches fields (if supported by the entity type) and calls the
+    // entity type specific load callback, for example hook_node_load().
+    if (!empty($queried_entities)) {
+      $this->attachLoad($queried_entities, $revision_id);
+      $entities += $queried_entities;
+    }
+
+    if ($this->cache) {
+      // Add entities to the cache if we are not loading a revision.
+      if (!empty($queried_entities) && !$revision_id) {
+        $this->cacheSet($queried_entities);
+      }
+    }
+
+    // Ensure that the returned array is ordered the same as the original
+    // $ids array if this was passed in and remove any invalid ids.
+    if ($passed_ids) {
+      // Remove any invalid ids from the array.
+      $passed_ids = array_intersect_key($passed_ids, $entities);
+      foreach ($entities as $entity) {
+        $passed_ids[$entity->{$this->idKey}] = $entity;
+      }
+      $entities = $passed_ids;
+    }
+
+    return $entities;
+  }
+
+  /**
+   * Create and return a new slider entity.
+   */
+  public function create() {
+    $entity = new stdClass();
+    $entity->type = 'layerslider';
+    $entity->title = '';
+    $entity->id = NULL;
+    $entity->bundle_type = 'standalone';
+    $entity->layers = array();
+
+    // Size properties
+    $entity->properties = new stdClass();
+    $entity->properties->width = 978;
+    $entity->properties->height = 396;
+
+    // UX properties
+    $entity->properties->responsive = TRUE;
+    $entity->properties->autoStart = TRUE;
+    $entity->properties->pauseOnHover = TRUE;
+    $entity->properties->autoPlayVideos = TRUE;
+    $entity->properties->keybNav = TRUE;
+    $entity->properties->navStartStop = TRUE;
+    $entity->properties->navPrevNext = TRUE;
+    //$entity->properties->hoverPrevNext = TRUE;
+    $entity->properties->navButtons = FALSE;
+    //$entity->properties->hoverBottomNav = FALSE;
+    $entity->properties->showBarTimer = TRUE;
+
+    // Animation properties
+    $entity->properties->slidedirection = 'right';
+    $entity->properties->slidedelay = 4000;
+    $entity->properties->durationin = 1000;
+    $entity->properties->durationout = 1000;
+    $entity->properties->easingin = 'easeInOutQuint';
+    $entity->properties->easingout = 'easeInOutQuint';
+    $entity->properties->delayin = 0;
+    $entity->properties->delayout = 0;
+
+    return $entity;
+  }
+
+  /**
+   * Saves the slider using drupal_write_record()
+   */
+  public function save($slider) {
+    if (empty($slider->id)) {
+      $slider->created = time();
+    }
+
+    // Invoke
+    module_invoke_all('entity_presave', $slider, 'layerslider');
+
+    // JSON encode properties
+    $slider->properties = json_encode($slider->properties);
+
+    // Save slider
+    $primary_keys = $slider->id ? 'id' : array();
+    drupal_write_record('layerslider_slider', $slider, $primary_keys);
+
+    // Create an array of fids which will be runned through file_usage_add()
+    $fids = array();
+    if (isset($slider->background)) {
+      $fids[] = $slider->background;
+    }
+
+    // Create an array of LIDs and SIDs in the slider object. Will be used to compare
+    // to LIDs and SIDs in the database for removal.
+    $obj_lids = array();
+    $obj_sids = array();
+    foreach ($slider->layers as $layer) {
+      if (isset($layer->lid)) {
+        $obj_lids[] = $layer->lid;
+      }
+
+      if (isset($layer->sublayers)) {
+        foreach ($layer->sublayers as $sublayer) {
+          if (isset($sublayer->sid)) {
+            $obj_sids[] = $sublayer->sid;
+          }
+        }
+      }
+    }
+
+    // Query SIDs in the database
+    $db_sids = db_select('layerslider_sublayer', 'sublayer')
+      ->fields('sublayer', array('sid'))
+      ->condition('id', $slider->id, '=')
+      ->execute()
+      ->fetchCol();
+
+    // Remove SIDs which are removed from the slider object but not yet from the
+    // database.
+    if ($db_sids) {
+      $removed_sids = array_diff($db_sids, $obj_sids);
+
+      // Remove from database
+      foreach ($removed_sids as $sid) {
+        db_delete('layerslider_sublayer')
+          ->condition('sid', $sid)
+          ->execute();
+      } 
+    }
+
+    // Query LIDs in the database
+    $db_lids = db_select('layerslider_layer', 'layer')
+      ->fields('layer', array('lid'))
+      ->condition('id', $slider->id, '=')
+      ->execute()
+      ->fetchCol();
+
+    // Remove LIDs which are removed from the slider object but not yet from the
+    // database.
+    if ($db_lids) {
+      $removed_lids = array_diff($db_lids, $obj_lids);
+
+      // Remove from database
+      foreach ($removed_lids as $lid) {
+        db_delete('layerslider_layer')
+          ->condition('lid', $lid)
+          ->execute();
+      } 
+    }
+
+    // Save layers
+    foreach ($slider->layers as $layer) {
+      $primary_keys = $layer->lid ? 'lid' : array();
+      $layer->id = $slider->id;
+
+      // JSON encode properties
+      $layer->properties = json_encode($layer->properties);
+
+      drupal_write_record('layerslider_layer', $layer, $primary_keys);
+
+      // Add background to $fids for file_usage_add()
+      if (isset($layer->background)) {
+        $fids[] = $layer->background;
+      }
+
+      // Save sublayers
+      foreach ($layer->sublayers as $sublayer) {
+        $primary_keys = $sublayer->sid ? 'sid' : array();
+        $sublayer->id = $slider->id;
+        $sublayer->lid = $layer->lid;
+
+        // Add image to $fids for file_usage_add()
+        if (isset($sublayer->content->image->file)) {
+          $fids[] = $sublayer->content->image->file;
+        }
+
+        // JSON encode properties, position and content
+        $sublayer->properties = json_encode($sublayer->properties);
+        $sublayer->position = json_encode($sublayer->position);
+        $sublayer->content = json_encode($sublayer->content);
+
+        drupal_write_record('layerslider_sublayer', $sublayer, $primary_keys);
+      }
+    }
+
+    // Run files through file_usage_add()
+    if (!empty($fids)) {
+      $files = file_load_multiple($fids);
+
+      foreach ($files as $file) {
+        // $id could also be SID or LID but in order to keep this simple,
+        // we will use the slider ID. Images will be deleted with a slider,
+        // not with a layer or a sublayer.
+        file_usage_add($file, 'layerslider', 'slider', $slider->id);
+      }
+    }
+
+    // Invoke
+    $invocation = empty($primary_keys) ? 'entity_insert' : 'entity_update';
+    module_invoke_all($invocation, $slider, 'layerslider');
+
+    return $slider;
+  }
+
+  /**
+   * Delete a single entity.
+   *
+   * Really a convenience function for delete_multiple().
+   */
+  public function delete($entity) {
+    $this->delete_multiple(array($entity));
+  }
+
+  /**
+   * Delete one or more slider entities.
+   *
+   * @param $ids
+   *   An array of entity IDs or a single numeric ID.
+   */
+  public function delete_multiple($entities) {
+    $ids = array();
+    if (!empty($entities)) {
+      $transaction = db_transaction();
+      try {
+        foreach ($entities as $entity) {
+          // Invoke hook_entity_delete().
+          module_invoke_all('entity_delete', $entity, 'layerslider');
+          $ids[] = $entity->id;
+        }
+        db_delete('layerslider_slider')
+          ->condition('id', $ids, 'IN')
+          ->execute();
+        db_delete('layerslider_layer')
+          ->condition('id', $ids, 'IN')
+          ->execute();
+        db_delete('layerslider_sublayer')
+          ->condition('id', $ids, 'IN')
+          ->execute();
+      }
+      catch (Exception $e) {
+        $transaction->rollback();
+        watchdog_exception('layerslider', $e);
+        throw $e;
+      }
+    }
+
+    // Query and delete all images assigned to deleted sliders
+    $fids = db_select('file_usage', 'f')
+      ->fields('f', array('fid', 'id'))
+      ->condition('module', 'layerslider')
+      ->condition('type', 'slider')
+      ->condition('id', $ids, 'IN')
+      ->execute()
+      ->fetchAllAssoc('fid');
+
+    if ($fids) {
+      $files = file_load_multiple(array_keys($fids));
+      foreach ($files as $fid => $file) {
+        $id = $fids[$fid]->id;
+        file_usage_delete($file, 'layerslider', 'slider', $id);
+        file_delete($file);
+      }
+    }
+  }
+}
+
+/**
+ * Sort sublayers by weight (z-index)
+ */
+function layerslider_sort_weight($a, $b) {
+  return $a->position->z - $b->position->z;
+}
+
+/**
+ * Implements hook_menu()
+ */
+function layerslider_menu() {
+  $items['admin/structure/layerslider'] = array(
+    'title' => 'LayerSlider',
+    'description' => 'Manage sliders.',
+    'page callback' => 'layerslider_view',
+    'access arguments' => array('administer layerslider'),
+  );
+  $items['admin/structure/layerslider/add'] = array(
+    'title' => 'Create slider',
+    'page callback' => 'layerslider_add',
+    'access arguments' => array('administer layerslider'),
+    'type' => MENU_LOCAL_ACTION,
+  );
+  $items['admin/structure/layerslider/%layerslider'] = array(
+    'title callback' => 'layerslider_title',
+    'title arguments' => array(3),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('layerslider_form', 3),
+    'access arguments' => array('administer layerslider'),
+  );
+  $items['admin/structure/layerslider/%layerslider/edit'] = array(
+    'title callback' => 'layerslider_title',
+    'title arguments' => array(3),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('layerslider_form', 3),
+    'access arguments' => array('administer layerslider'),
+    'type' => MENU_LOCAL_TASK,
+    'context' => MENU_CONTEXT_PAGE | MENU_CONTEXT_INLINE,
+  );
+  $items['admin/structure/layerslider/%layerslider/delete'] = array(
+    'title' => 'Delete',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('layerslider_delete_form', 3),
+    'access arguments' => array('administer layerslider'),
+    'type' => MENU_CALLBACK,
+  );
+
+  return $items;
+}
+
+/**
+ * Callback for a page title when slider is displayed.
+ */
+function layerslider_title($entity) {
+  $title = isset($entity->title) ? $entity->title : '';
+
+  return t('Edit @title', array('@title' => $title));
+}
+
+/**
+ * View of all sliders
+ */
+function layerslider_view() {
+  $content = array();
+  // Load all of our entities.
+  $entities = layerslider_load_multiple();
+  $rows = array();
+  foreach ($entities as $entity) {
+    // Create tabular rows for our entities.
+    $row = array(
+      'data' => array(
+        'title' => l($entity->title, 'admin/structure/layerslider/' . $entity->id),
+      ),
+    );
+
+    // Build a list of all the accessible operations for the current slider.
+    $operations = array();
+    $operations['edit'] = array(
+      'title' => t('edit'),
+      'href' => 'admin/structure/layerslider/' . $entity->id . '/edit',
+    );
+    $operations['delete'] = array(
+      'title' => t('delete'),
+      'href' => 'admin/structure/layerslider/' . $entity->id . '/delete',
+    );
+    $row['data']['operations'] = array(
+      'data' => array(
+        '#theme' => 'links',
+        '#links' => $operations,
+        '#attributes' => array('class' => array('links', 'inline')),
+      ),
+    );
+
+    $rows[] = $row;
+  }
+
+  // Put our entities into a themed table. See theme_table() for details.
+  $content['entity_table'] = array(
+    '#theme' => 'table',
+    '#rows' => $rows,
+    '#header' => array(t('Title'), t('Operations')),
+    '#empty' => t('No sliders currently exist. <a href="@link">Create one</a>.', array('@link' => url('admin/structure/layerslider/add'))),
+  );
+
+  return $content;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function layerslider_permission() {
+  $permissions = array(
+    'administer layerslider' =>  array(
+      'title' => t('Administer LayerSlider'),
+    ),
+  );
+  return $permissions;
+}
+
+/**
+ * Implements hook_js_alter()
+ */
+function layerslider_js_alter(&$javascript) {
+  // Remove Layerslider from the Exchange theme to avoid
+  // duplicate libraries
+  global $theme;
+  if ($theme == 'exchange') {
+    global $theme_path;
+
+    if (isset($javascript[$theme_path . '/js/layerslider.kreaturamedia.jquery.js'])) {
+      unset($javascript[$theme_path . '/js/layerslider.kreaturamedia.jquery.js']);
+    }
+  }
+}
+
+/**
+ * Implements hook_css_alter()
+ */
+function layerslider_css_alter(&$css) {
+  // Remove Layerslider from the Exchange theme to avoid
+  // duplicate libraries
+  global $theme;
+  if ($theme == 'exchange') {
+    global $theme_path;
+
+    if (isset($css[$theme_path . '/css/layerslider.css'])) {
+      unset($css[$theme_path . '/css/layerslider.css']);
+    }
+  }
+}
+
+/**
+ * Impelements hook_help()
+ */
+function layerslider_help($path, $arg) {
+  switch ($path) {
+    case 'admin/help#layerslider':
+    $output = '';
+    $output .= '<h3>' . t('About') . '</h3>';
+    $output .= '<p>' . t("The LayerSlider module allows you to create sliders which are available as blocks.") . '<p>';
+    $output .= '<h3>' . t('Reordering slides') . '</h3>';
+    $output .= '<p>' . t('You can easily reorder slides by dragging them on their handle.') . '</p>';
+    $output .= '<img src="' . url(drupal_get_path('module', 'layerslider') . '/help/reordering.png') . '" title="Reordering slides" />';
+    $output .= '<h3>' . t('Animations') . '</h3>';
+    $output .= '<p>' . t('Here is a list of different animation properties you can apply to your slider, slides and elements.') . '</p>';
+    $output .= '<dl>';
+      $output .= '<dt>' . t('Slide direction (slider and slide)') . '</dt>';
+      $output .= '<dd>' . t('Slide direction. Slide will slide from this direction. Slide setting will override slider setting.') . '</dd>';
+      $output .= '<dt>' . t('Slide delay (slider and slide)') . '</dt>';
+      $output .= '<dd>' . t('Time before the next slide will be loading. Slide setting will override slider setting.') . '</dd>';
+      $output .= '<dt>' . t('Direction (element)') . '</dt>';
+      $output .= '<dd>' . t('Element direction. Element will slide from this direction. You can also set this to fade.') . '</dd>';
+      $output .= '<dt>' . t('Duration (slider, slide and element)') . '</dt>';
+      $output .= '<dd>' . t('Duration of the slide animation.') . '</dd>';
+      $output .= '<dt>' . t('Easing (slider, slide and element)') . '</dt>';
+      $output .= '<dd>' . t('Easing (type of transition) of the slide animation. See <a href="@link" target="_blank">easings.net</a>.', array('@link' => 'http://easings.net/')) . '</dd>';
+      $output .= '<dt>' . t('Delay (slider, slide and element)') . '</dt>';
+      $output .= '<dd>' . t('Delay time of the slide animation.') . '</dd>';
+      $output .= '<dt>' . t('Show until (element)') . '</dt>';
+      $output .= '<dd>' . t('Animate element out before the slide will animate out.') . '</dd>';
+    $output .= '</dl>';
+    $output .= '<h3>' . t('Tips') . '</h3>';
+    $output .= '<ol>';
+    $output .= '<li>' . t("You can open an element configuration fieldset by double-clicking on it in the preview area.") . '</li>';
+    $output .= '<li>' . t("You can select an element for the following tasks by clicking on it in the preview area. A red border will surround the selected element.") . '<ul>';
+      $output .= '<li>' . t("Element can be moved by pressing shift and arrow key simultaneously. Each keypress is 10 pixels.") . '</li>';
+      $output .= '<li>' . t("Element can be deleted by pressing the Delete button.") . '</li>';
+    $output .= '</ul></li>';
+    $output .= '</ol>';
+    $output .= '<img src="' . url(drupal_get_path('module', 'layerslider') . '/help/sublayer.png') . '" title="Acting on elements" />';
+    return $output;
+  }
+}
+
+/**
+ * Provides a wrapper on the edit form to add a new entity.
+ */
+function layerslider_add() {
+  $entity = entity_get_controller('layerslider')->create();
+  return drupal_get_form('layerslider_form', $entity);
+}
+
+/**
+ * Form for managing slider
+ */
+function layerslider_form($form, &$form_state, $slider = NULL) {
+  // Check for jQuery version. Only 1.7 works.
+  $version = variable_get('jquery_update_jquery_version', NULL);
+  if ($version != '1.7' && module_exists('jquery_update')) {
+    drupal_set_message(
+      t(
+        "LayerSlider works only with jQuery 1.7. You can set the version at <a href='@url'>jQuery update settings</a>.", 
+        array(
+          '@url' => url(
+            'admin/config/development/jquery_update',
+            array(
+              'query' => array(
+                'destination' => current_path()
+              )
+            )
+          ),
+        )
+      ),
+      'warning'
+    );
+  }
+
+  // Add necessary libraries
+  drupal_add_library('system', 'ui.sortable');
+  drupal_add_library('system', 'ui.draggable');
+  drupal_add_library('system', 'ui.dialog');
+
+  $module_path = drupal_get_path('module', 'layerslider');
+
+  // Store slider to $form_state for easy access in submit handler
+  if (!isset($form_state['slider'])) {
+    // Re-index layers and sublayers for easier access in AJAX
+    // functions.
+    if (isset($slider->layers)) {
+      foreach ($slider->layers as $lid => $layer) {
+        if (isset($layer->sublayers)) {
+          $slider->layers[$lid]->sublayers = array_values($layer->sublayers);
+        }
+      }
+
+      $slider->layers = array_values($slider->layers);
+    }
+    
+
+    $form_state['slider'] = $slider;
+  }
+
+  $form['#attached']['js'][] = $module_path . '/js/layerslider-admin.js';
+  $form['#attached']['css'][] = $module_path . '/css/layerslider-admin.css';
+
+  $form['#tree'] = TRUE;
+
+  $easings = array(
+    'linear' => t('linear'), 'swing' => t('swing'),
+    'easeInQuad' => t('easeInQuad'), 'easeOutQuad' => t('easeOutQuad'),
+    'easeInOutQuad' => t('easeInOutQuad'), 'easeInCubic' => t('easeInCubic'),
+    'easeOutCubic' => t('easeOutCubic'), 'easeInOutCubic' => t('easeInOutCubic'),
+    'easeInQuart' => t('easeInQuart'), 'easeOutQuart' => t('easeOutQuart'),
+    'easeInOutQuart' => t('easeInOutQuart'), 'easeInQuint' => t('easeInQuint'),
+    'easeOutQuint' => t('easeOutQuint'), 'easeInOutQuint' => t('easeInOutQuint'),
+    'easeInSine' => t('easeInSine'), 'easeOutSine' => t('easeOutSine'),
+    'easeInOutSine' => t('easeInOutSine'), 'easeInExpo' => t('easeInExpo'),
+    'easeOutExpo' => t('easeOutExpo'), 'easeInOutExpo' => t('easeInOutExpo'),
+    'easeInCirc' => t('easeInCirc'), 'easeOutCirc' => t('easeOutCirc'),
+    'easeInOutCirc' => t('easeInOutCirc'), 'easeInElastic' => t('easeInElastic'),
+    'easeOutElastic' => t('easeOutElastic'), 'easeInOutElastic' => t('easeInOutElastic'),
+    'easeInBack' => t('easeInBack'), 'easeOutBack' => t('easeOutBack'),
+    'easeInOutBack' => t('easeInOutBack'), 'easeInBounce' => t('easeInBounce'),
+    'easeOutBounce' => t('easeOutBounce'), 'easeInOutBounce' => t('easeInOutBounce'),
+  );
+
+  $directions = array(
+    'left' => t('Left'),
+    'right' => t('Right'),
+    'top' => t('Top'),
+    'bottom' => t('Bottom')
+  );
+
+  $form['settings'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Slider configuration'),
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE,
+    '#weight' => 10,
+  );
+
+  $form['settings']['title'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Title'),
+    '#default_value' => $slider->title,
+    '#required' => TRUE,
+  );
+
+  // Slider properties
+  $form['settings']['properties']['responsive'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Responsive'),
+    '#default_value' => $slider->properties->responsive,
+  );
+  $form['settings']['properties']['autoStart'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Start the slideshow automatically'),
+    '#default_value' => $slider->properties->autoStart,
+  );
+  $form['settings']['properties']['pauseOnHover'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Pause slideshow on mouse hover'),
+    '#default_value' => $slider->properties->pauseOnHover,
+  );
+  $form['settings']['properties']['autoPlayVideos'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Play Youtube / Vimeo videos automatically'),
+    '#default_value' => $slider->properties->autoPlayVideos,
+  );
+  $form['settings']['properties']['keybNav'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Keyboard navigation'),
+    '#default_value' => $slider->properties->keybNav,
+  );
+  $form['settings']['properties']['navStartStop'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Display start/stop button'),
+    '#default_value' => $slider->properties->navStartStop,
+  );
+  $form['settings']['properties']['navPrevNext'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Display previous/next navigation'),
+    '#default_value' => $slider->properties->navPrevNext,
+  );
+  /*
+  $form['settings']['properties']['hoverPrevNext'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('On mouse hover'),
+    '#default_value' => $slider->properties->hoverPrevNext,
+    '#states' => array(
+      'visible' => array(
+        ':input[name="slider[navPrevNext]"]' => array('checked' => TRUE)
+      ),
+    ),
+  );
+  */
+  $form['settings']['properties']['navButtons'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Slide navigation'),
+    '#default_value' => $slider->properties->navButtons,
+  );
+  /*
+  $form['settings']['properties']['hoverBottomNav'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('On mouse hover'),
+    '#default_value' => $slider->properties->hoverBottomNav,
+    '#states' => array(
+      'visible' => array(
+        ':input[name="slider[navButtons]"]' => array('checked' => TRUE)
+      ),
+    ),
+  );
+  */
+  $form['settings']['properties']['showBarTimer'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Show bar timer'),
+    '#default_value' => $slider->properties->showBarTimer,
+  );
+
+  // Slider size
+  $form['settings']['properties']['width'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Width'),
+    '#default_value' => $slider->properties->width,
+    '#prefix' => '<h3>' . t('Slider size') . '</h3>',
+    '#field_suffix' => t('px'),
+    '#size' => 8,
+    '#required' => TRUE,
+    '#element_validate' => array(
+      'layerslider_validate_integer',
+      'layerslider_validate_positive'
+    ),
+  );
+  $form['settings']['properties']['height'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Height'),
+    '#default_value' => $slider->properties->height,
+    '#field_suffix' => t('px'),
+    '#size' => 8,
+    '#required' => TRUE,
+    '#element_validate' => array(
+      'layerslider_validate_integer',
+      'layerslider_validate_positive'
+    ),
+  );
+
+  $form['settings']['background'] = array(
+    '#type' => 'managed_file',
+    '#field_prefix' => '<h3>' . t('Background') . '</h3>',
+    '#default_value' => isset($slider->background) ? $slider->background : 0,
+    '#upload_validators' => array(
+      'file_validate_is_image'
+    ),
+    '#upload_location' => 'public://layerslider',
+  );
+
+  $header_cells = array('', t('Duration'), t('Easing'), t('Delay'));
+  $header = '<thead><tr>';
+  foreach ($header_cells as $cell) {
+    $header .= '<th>' . $cell . '</th>';
+  }
+  $header .= '</tr></thead>';
+  $form['settings']['table']['properties'] = array(
+    '#type' => 'container',
+    '#prefix' => '<h3>' . t('Animations') . '</h3><table class="property-table">' . $header . '<tbody><tr><td>' . t('In', array(), array('context' => 'animation')) . '</td>',
+    '#suffix' => '</tbody></table>',
+  );
+  $form['settings']['table']['properties']['#suffix'] .= '<div class="description">' . t('You can override animation settings for each slide and element.') . '</div>';
+  $form['settings']['table']['properties']['slidedirection'] = array(
+    '#type' => 'select',
+    '#title' => t('Slide direction'),
+    '#options' => $directions,
+    '#default_value' => isset($slider->properties->slidedirection) ? $slider->properties->slidedirection : 'right',
+    '#required' => TRUE,
+  );
+  $form['settings']['table']['properties']['slidedelay'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Slide delay'),
+    '#field_suffix' => t('ms', array(), array('context' => 'milliseconds')),
+    '#size' => 6,
+    '#default_value' => isset($slider->properties->slidedelay) ? $slider->properties->slidedelay : 4000,
+    '#required' => TRUE,
+    '#element_validate' => array(
+      'layerslider_validate_integer',
+      'layerslider_validate_positive'
+    ),
+  );
+  $form['settings']['table']['properties']['durationin'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Duration in'),
+    '#field_suffix' => t('ms', array(), array('context' => 'milliseconds')),
+    '#size' => 6,
+    '#default_value' => isset($slider->properties->durationin) ? $slider->properties->durationin : 1000,
+    '#prefix' => '<td>',
+    '#suffix' => '</td>',
+    '#required' => TRUE,
+    '#element_validate' => array(
+      'layerslider_validate_integer',
+      'layerslider_validate_positive'
+    ),
+  );
+  $form['settings']['table']['properties']['easingin'] = array(
+    '#type' => 'select',
+    '#title' => t('Easing in'),
+    '#options' => $easings,
+    '#default_value' => isset($slider->properties->easingin) ? $slider->properties->easingin : 'easeInOutQuint',
+    '#prefix' => '<td>',
+    '#suffix' => '</td>',
+    '#required' => TRUE,
+  );
+  $form['settings']['table']['properties']['delayin'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Delay in'),
+    '#field_suffix' => t('ms', array(), array('context' => 'milliseconds')),
+    '#size' => 6,
+    '#default_value' => isset($slider->properties->delayin) ? $slider->properties->delayin : 0,
+    '#prefix' => '<td>',
+    '#suffix' => '</td></tr><tr><td>' . t('Out', array(), array('context' => 'animation')) . '</td>',
+    '#required' => TRUE,
+    '#element_validate' => array(
+      'layerslider_validate_integer',
+      'layerslider_validate_positive'
+    ),
+  );
+  $form['settings']['table']['properties']['durationout'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Duration out'),
+    '#field_suffix' => t('ms', array(), array('context' => 'milliseconds')),
+    '#size' => 6,
+    '#default_value' => isset($slider->properties->durationout) ? $slider->properties->durationout : 1000,
+    '#prefix' => '<td>',
+    '#suffix' => '</td>',
+    '#required' => TRUE,
+    '#element_validate' => array(
+      'layerslider_validate_integer',
+      'layerslider_validate_positive'
+    ),
+  );
+  $form['settings']['table']['properties']['easingout'] = array(
+    '#type' => 'select',
+    '#title' => t('Easing out'),
+    '#options' => $easings,
+    '#default_value' => isset($slider->properties->easingout) ? $slider->properties->easingout : 'easeInOutQuint',
+    '#prefix' => '<td>',
+    '#suffix' => '</td>',
+    '#required' => TRUE,
+  );
+
+  $form['settings']['table']['properties']['delayout'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Delay out'),
+    '#field_suffix' => t('ms', array(), array('context' => 'milliseconds')),
+    '#size' => 6,
+    '#default_value' => isset($slider->properties->delayout) ? $slider->properties->delayout : 0,
+    '#prefix' => '<td>',
+    '#suffix' => '</td></tr>',
+    '#required' => TRUE,
+    '#element_validate' => array(
+      'layerslider_validate_integer',
+      'layerslider_validate_positive'
+    ),
+  );
+
+  $form['layer_wrapper'] = array(
+    '#type' => 'vertical_tabs',
+    '#prefix' => '<div id="layer-wrapper">',
+    '#suffix' => '</div>',
+  );
+
+  // Load slider background here for use in layer previews
+  $slider_bg = NULL;
+  if (isset($slider->background) && $background = file_load($slider->background)) {
+    $slider_bg = url(file_create_url($background->uri), array('absolute' => TRUE));
+  }
+
+  if (isset($slider->layers)) {
+    foreach ($slider->layers as $layer_index => $layer) {
+      $title = empty($layer->title) ? t('Slide #@number', array('@number' => $layer_index + 1)) : $layer->title;
+      $form['layers'][$layer_index] = array(
+        '#type' => 'fieldset',
+        '#title' => check_plain($title),
+        '#collapsible' => TRUE,
+        '#group' => 'layer_wrapper',
+        '#attributes' => array(
+          'id' => "layer-{$layer_index}-wrapper",
+          'data-layer_index' => $layer_index,
+        ),
+      );
+
+      // If $slider->id or $layer->lid are NULL, they will be
+      // set in the save function.
+      $form['layers'][$layer_index]['id'] = array(
+        '#type' => 'hidden',
+        '#value' => $slider->id
+      );
+      $form['layers'][$layer_index]['lid'] = array(
+        '#type' => 'hidden',
+        '#value' => $layer->lid
+      );
+      $form['layers'][$layer_index]['weight'] = array(
+        '#type' => 'hidden',
+        '#default_value' => $layer->weight,
+      );
+
+      $form['layers'][$layer_index]['configuration'] = array(
+        '#type' => 'fieldset',
+        '#title' => t('Slide configuration'),
+        '#collapsible' => TRUE,
+        '#collapsed' => TRUE,
+        '#weight' => 10,
+      );
+      $form['layers'][$layer_index]['configuration']['title'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Title'),
+        '#default_value' => $layer->title,
+        '#weight' => -6,
+      );
+      $form['layers'][$layer_index]['configuration']['background'] = array(
+        '#type' => 'managed_file',
+        '#field_prefix' => '<h3>' . t('Background') . '</h3>',
+        '#default_value' => isset($layer->background) ? $layer->background : 0,
+        '#upload_validators' => array(
+          'file_validate_is_image'
+        ),
+        '#upload_location' => 'public://layerslider',
+        '#weight' => -5,
+      );
+
+      // Layer properties
+      // Theming function cannot be used to theme table since
+      // AJAX responses are not going through them
+      $header_cells = array('', t('Duration'), t('Easing'), t('Delay'));
+      $header = '<thead><tr>';
+      foreach ($header_cells as $cell) {
+        $header .= '<th>' . $cell . '</th>';
+      }
+      $header .= '</tr></thead>';
+      $form['layers'][$layer_index]['configuration']['properties'] = array(
+        '#type' => 'container',
+        '#prefix' => '<h3>' . t('Animations') . '</h3><table class="property-table">' . $header . '<tbody><tr><td>' . t('In', array(), array('context' => 'animation')) . '</td>',
+        '#suffix' => '</tbody></table>',
+      );
+
+      // Properties for old transitions
+      $form['layers'][$layer_index]['configuration']['properties']['slidedirection'] = array(
+        '#type' => 'select',
+        '#title' => t('Slide direction'),
+        '#options' => $directions,
+        '#default_value' => isset($layer->properties->slidedirection) ? $layer->properties->slidedirection : $slider->properties->slidedirection,
+      );
+      $form['layers'][$layer_index]['configuration']['properties']['durationin'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Duration in'),
+        '#field_suffix' => t('ms', array(), array('context' => 'milliseconds')),
+        '#size' => 6,
+        '#default_value' => isset($layer->properties->durationin) ? $layer->properties->durationin : '',
+        '#prefix' => '<td>',
+        '#suffix' => '</td>',
+        '#attributes' => array(
+          'placeholder' => $slider->properties->durationin,
+        ),
+        '#element_validate' => array(
+          'layerslider_validate_integer',
+          'layerslider_validate_positive'
+        ),
+      );
+      $form['layers'][$layer_index]['configuration']['properties']['easingin'] = array(
+        '#type' => 'select',
+        '#title' => t('Easing in'),
+        '#options' => $easings,
+        '#default_value' => isset($layer->properties->easingin) ? $layer->properties->easingin : $slider->properties->easingin,
+        '#prefix' => '<td>',
+        '#suffix' => '</td>',
+      );
+      $form['layers'][$layer_index]['configuration']['properties']['delayin'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Delay in'),
+        '#field_suffix' => t('ms', array(), array('context' => 'milliseconds')),
+        '#size' => 6,
+        '#default_value' => isset($layer->properties->delayin) ? $layer->properties->delayin : '',
+        '#prefix' => '<td>',
+        '#suffix' => '</td></tr><tr><td>' . t('Out', array(), array('context' => 'animation')) . '</td>',
+        '#attributes' => array(
+          'placeholder' => $slider->properties->delayin,
+        ),
+        '#element_validate' => array(
+          'layerslider_validate_integer',
+          'layerslider_validate_positive'
+        ),
+      );
+      $form['layers'][$layer_index]['configuration']['properties']['durationout'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Duration out'),
+        '#field_suffix' => t('ms', array(), array('context' => 'milliseconds')),
+        '#size' => 6,
+        '#default_value' => isset($layer->properties->durationout) ? $layer->properties->durationout : '',
+        '#prefix' => '<td>',
+        '#suffix' => '</td>',
+        '#attributes' => array(
+          'placeholder' => $slider->properties->durationout,
+        ),
+        '#element_validate' => array(
+          'layerslider_validate_integer',
+          'layerslider_validate_positive'
+        ),
+      );
+      $form['layers'][$layer_index]['configuration']['properties']['easingout'] = array(
+        '#type' => 'select',
+        '#title' => t('Easing out'),
+        '#options' => $easings,
+        '#default_value' => isset($layer->properties->easingout) ? $layer->properties->easingout : $slider->properties->easingout,
+        '#prefix' => '<td>',
+        '#suffix' => '</td>',
+      );
+
+      $form['layers'][$layer_index]['configuration']['properties']['delayout'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Delay out'),
+        '#field_suffix' => t('ms', array(), array('context' => 'milliseconds')),
+        '#size' => 6,
+        '#default_value' => isset($layer->properties->delayout) ? $layer->properties->delayout : '',
+        '#prefix' => '<td>',
+        '#suffix' => '</td></tr>',
+        '#attributes' => array(
+          'placeholder' => $slider->properties->delayout,
+        ),
+        '#element_validate' => array(
+          'layerslider_validate_integer',
+          'layerslider_validate_positive'
+        ),
+      );
+      $form['layers'][$layer_index]['configuration']['properties']['slidedelay'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Slide delay'),
+        '#field_suffix' => t('ms', array(), array('context' => 'milliseconds')),
+        '#size' => 6,
+        '#default_value' => isset($layer->properties->slidedelay) ? $layer->properties->slidedelay : '',
+        '#attributes' => array(
+          'placeholder' => $slider->properties->slidedelay,
+        ),
+        '#element_validate' => array(
+          'layerslider_validate_integer',
+          'layerslider_validate_positive'
+        ),
+      );
+
+      $form['layers'][$layer_index]['preview']['area'] = array(
+        '#type' => 'container',
+        '#attributes' => array(
+          'style' => "width:{$slider->properties->width}px;height:{$slider->properties->height}px;",
+          'class' => array('preview-area'),
+        )
+      );
+
+      // Set background for preview
+      if (isset($layer->background) && $background = file_load($layer->background)) {
+        $layer_bg = url(file_create_url($background->uri), array('absolute' => TRUE));
+        $form['layers'][$layer_index]['preview']['area']['#attributes']['style'] .= "background-image:url({$layer_bg});";
+      }
+      elseif (isset($slider_bg)) {
+        $form['layers'][$layer_index]['preview']['area']['#attributes']['style'] .= "background-image:url({$slider_bg});";
+      }
+
+      // Sublayers
+      $form['layers'][$layer_index]['sublayers_title'] = array(
+        '#markup' => '<h3>' . t('Elements') . '</h3>',
+      );
+      $form['layers'][$layer_index]['sublayers'] = array(
+        '#type' => 'container',
+        '#attributes' => array(
+          'id' => "edit-layers-{$layer_index}-sublayers",
+          'class' => array('sublayers'),
+        ),
+      );
+      $form['layers'][$layer_index]['sublayer_create'] = array(
+        '#type' => 'submit',
+        '#value' => t('Add element'),
+        '#name' => "layer-{$layer_index}-sublayer-create",
+        '#submit' => array('layerslider_sublayer_create'),
+        '#limit_validation_errors' => array(),
+        '#ajax' => array(
+          'callback' => 'layerslider_sublayer_callback',
+        ),
+        '#weight' => 9,
+      );
+
+      if (isset($layer->sublayers)) {
+        foreach ($layer->sublayers as $sublayer_index => $sublayer) {
+          // Preview
+          $markup = '';
+
+          if (isset($sublayer->content->{$sublayer->type})) {
+            $content = $sublayer->content->{$sublayer->type};
+
+            switch ($sublayer->type) {
+              case 'image':
+                if (isset($content->file) && $image = file_load($content->file)) {
+                  $markup = theme_image(array(
+                    'path' => file_create_url($image->uri),
+                    'width' => isset($content->width) ? $content->width : NULL,
+                    'height' => isset($content->height) ? $content->height : NULL,
+                    'attributes' => array(),
+                  ));
+                }
+                break;
+              case 'text':
+                if (isset($content->content)) {
+                  $color = 'FFFFFF';
+                  if (isset($content->color) && !empty($content->color)) {
+                    $color = $content->color;
+                  }
+                  $markup = "<div style='color:#{$color}'>" . check_markup($content->content, $content->format) . '</div>';
+                }
+                break;
+              case 'heading':
+                if (isset($content->value) && strlen($content->value) > 0) {
+                  $color = 'FFFFFF';
+                  if (isset($content->color) && !empty($content->color)) {
+                    $color = $content->color;
+                  }
+                  $markup = "<{$content->level} style='color:#{$color};'>{$content->value}</{$content->level}>";
+                }
+                break;
+              case 'video':
+                // Check which the source is
+                if (!empty($content->url)) {
+                  if (strpos($content->url, 'youtube') !== FALSE) {
+                    $components = parse_url($content->url);
+                    parse_str($components['query'], $query);
+                    $url = $components['scheme'] . '://' . $components['host'] . '/embed/' . $query['v'] . '?wmode=opaque';
+                    $markup = "<iframe width='{$content->width}' height='{$content->height}' src='{$url}' frameborder='0' allowfullscreen></iframe>";
+                  }
+                  elseif (strpos($content->url, 'vimeo') !== FALSE) {
+                    $components = parse_url($content->url);
+                    $url = $components['scheme'] . '://player.vimeo.com/video' . $components['path'];
+
+                    $markup = "<iframe src='{$url}' width='{$content->width}' height='{$content->height}' frameborder='0' webkitAllowFullScreen mozallowfullscreen allowFullScreen></iframe>";
+                  }
+                }
+                break;
+            }
+
+            if (!empty($markup)) {
+              $form['layers'][$layer_index]['preview']['area'][$sublayer_index] = array(
+                '#type' => 'container',
+                '#attributes' => array(
+                  'class' => array('sublayer'),
+                  'style' => "position:absolute;left:{$sublayer->position->x}px;top:{$sublayer->position->y}px;z-index:{$sublayer->position->z}",
+                  'data-layer_index' => $layer_index,
+                  'data-sublayer_index' => $sublayer_index,
+                ),
+              );
+              $form['layers'][$layer_index]['preview']['area'][$sublayer_index]['sublayer'] = array(
+                '#markup' => $markup,
+              );
+              $form['layers'][$layer_index]['preview']['area'][$sublayer_index]['overlay'] = array(
+                '#markup' => '<div class="sublayer-overlay"></div>',
+              );
+            }
+          }
+
+          $title = empty($sublayer->title) ? t('Element #@number', array('@number' => $sublayer_index + 1)) : $sublayer->title;
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index] = array(
+            '#type' => 'fieldset',
+            '#title' => check_plain($title),
+            '#collapsible' => TRUE,
+            '#collapsed' => TRUE,
+            '#attributes' => array(
+              'class' => array('sublayer'),
+              'data-layer_index' => $layer_index,
+              'data-sublayer_index' => $sublayer_index,
+            ),
+          );
+          // If $slider->id, $layer->lid or $sublayer->sid are NULL, they will be
+          // set in the save function.
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['id'] = array(
+            '#type' => 'hidden',
+            '#value' => $slider->id
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['lid'] = array(
+            '#type' => 'hidden',
+            '#value' => $layer->lid
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['sid'] = array(
+            '#type' => 'hidden',
+            '#value' => $sublayer->sid
+          );
+
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['title'] = array(
+            '#type' => 'textfield',
+            '#title' => t('Title'),
+            '#default_value' => $sublayer->title,
+          );
+          // Link properties
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['link'] = array(
+            '#type' => 'fieldset',
+            '#description' => t('You can link this element by entering the URL below.'),
+            '#title' => t('Link'),
+            '#collapsible' => TRUE,
+            '#collapsed' => TRUE,
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['link']['url'] = array(
+            '#type' => 'textfield',
+            '#title' => t('URL'),
+            '#default_value' => isset($sublayer->content->link->url) ? $sublayer->content->link->url : '',
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['link']['target'] = array(
+            '#type' => 'select',
+            '#title' => t('Open in'),
+            '#default_value' => isset($sublayer->content->link->target) ? $sublayer->content->link->target : '_self',
+            '#options' => array(
+              '_self' => t('Same window'),
+              '_blank' => t('New window')
+            ),
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['type'] = array(
+            '#type' => 'select',
+            '#title' => t('Type'),
+            '#default_value' => isset($sublayer->type) ? $sublayer->type : NULL,
+            '#options' => array(
+              'image' => t('Image'),
+              'text' => t('Text'),
+              'heading' => t('Heading'),
+              'video' => t('Video'),
+            ),
+          );
+
+          // Video (embed) properties
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['content']['video'] = array(
+            '#type' => 'container',
+            '#states' => array(
+              'visible' => array(
+                ":input[name='layers[{$layer_index}][sublayers][{$sublayer_index}][type]']" => array('value' => 'video'),
+              ),
+            ),
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['content']['video']['url'] = array(
+            '#type' => 'textfield',
+            '#title' => t('URL'),
+            '#default_value' => isset($sublayer->content->video->url) ? $sublayer->content->video->url : '',
+            '#description' => t('Only Youtube and Vimeo videos are supported.')
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['content']['video']['width'] = array(
+            '#type' => 'textfield',
+            '#title' => t('Width'),
+            '#default_value' => isset($sublayer->content->video->width) ? $sublayer->content->video->width : 560,
+            '#field_suffix' => t('px'),
+            '#size' => 6,
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['content']['video']['height'] = array(
+            '#type' => 'textfield',
+            '#title' => t('Height'),
+            '#default_value' => isset($sublayer->content->video->height) ? $sublayer->content->video->height : 315,
+            '#field_suffix' => t('px'),
+            '#size' => 6,
+          );
+
+          // Image
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['content']['image'] = array(
+            '#type' => 'container',
+            '#states' => array(
+              'visible' => array(
+                ":input[name='layers[{$layer_index}][sublayers][{$sublayer_index}][type]']" => array('value' => 'image'),
+              ),
+            ),
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['content']['image']['file'] = array(
+            '#type' => 'managed_file',
+            '#title' => t('Image'),
+            '#default_value' => isset($sublayer->content->image->file) ? $sublayer->content->image->file : 0,
+            '#upload_validators' => array(
+              'file_validate_is_image'
+            ),
+            '#upload_location' => 'public://layerslider',
+          );
+
+          // Text
+          // We need to wrap text into container because if we apply #states
+          // directly to ['text']['content'], the format fieldset wont have #states.
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['content']['text'] = array(
+            '#type' => 'container',
+            '#states' => array(
+              'visible' => array(
+                ":input[name='layers[{$layer_index}][sublayers][{$sublayer_index}][type]']" => array('value' => 'text'),
+              ),
+            ),
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['content']['text']['color'] = array(
+            '#type' => 'textfield',
+            '#title' => t('Color'),
+            '#description' => t('Text color in hexadecimal notation. Default is #FFFFFF (white).'),
+            '#field_prefix' => '#',
+            '#default_value' => isset($sublayer->content->text->color) ? $sublayer->content->text->color : 'FFFFFF',
+            '#element_validate' => array(
+              'layerslider_validate_color',
+            ),
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['content']['text']['content'] = array(
+            '#type' => 'text_format',
+            '#title' => t('Text'),
+            '#default_value' => isset($sublayer->content->text->content) ? $sublayer->content->text->content : '',
+            '#format' => isset($sublayer->content->text->format) ? $sublayer->content->text->format : NULL,
+          );
+
+          // Heading
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['content']['heading'] = array(
+            '#type' => 'container',
+            '#states' => array(
+              'visible' => array(
+                ":input[name='layers[{$layer_index}][sublayers][{$sublayer_index}][type]']" => array('value' => 'heading'),
+              ),
+            ),
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['content']['heading']['level'] = array(
+            '#type' => 'select',
+            '#title' => t('Level'),
+            '#default_value' => isset($sublayer->content->heading->level) ? $sublayer->content->heading->level : '',
+            '#options' => array(
+              'h1' => 'H1',
+              'h2' => 'H2',
+              'h3' => 'H3',
+              'h4' => 'H4',
+              'h5' => 'H5',
+              'h6' => 'H6',
+            ),
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['content']['heading']['color'] = array(
+            '#type' => 'textfield',
+            '#title' => t('Color'),
+            '#description' => t('Text color in hexadecimal notation. Default is #FFFFFF (white).'),
+            '#field_prefix' => '#',
+            '#default_value' => isset($sublayer->content->heading->color) ? $sublayer->content->heading->color : 'FFFFFF',
+            '#element_validate' => array(
+              'layerslider_validate_color',
+            ),
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['content']['heading']['value'] = array(
+            '#type' => 'textfield',
+            '#title' => t('Text'),
+            '#default_value' => isset($sublayer->content->heading->value) ? $sublayer->content->heading->value : '',
+          );
+
+          // Position properties
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['position']['x'] = array(
+            '#type' => 'hidden',
+            '#default_value' => $sublayer->position->x,
+            '#required' => TRUE,
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['position']['y'] = array(
+            '#type' => 'hidden',
+            '#default_value' => $sublayer->position->y,
+            '#required' => TRUE,
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['position']['z'] = array(
+            '#type' => 'hidden',
+            '#default_value' => $sublayer->position->z,
+            '#required' => TRUE,
+          );
+
+          // Sublayer properties
+          $header_cells = array('', t('Direction'), t('Duration'), t('Easing'), t('Delay'), t('Show until'));
+          $header = '<thead><tr>';
+          foreach ($header_cells as $cell) {
+            $header .= '<th>' . $cell . '</th>';
+          }
+          $header .= '</tr></thead>';
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['properties'] = array(
+            '#type' => 'container',
+            '#prefix' => '<h3>' . t('Animations') . '</h3><table class="property-table">' . $header . '<tbody><tr><td>' . t('In', array(), array('context' => 'animation')) . '</td>',
+            '#suffix' => '</tbody></table>',
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['properties']['slidedirection'] = array(
+            '#type' => 'select',
+            '#title' => t('Slide direction'),
+            '#options' => array_merge($directions, array('fade' => t('Fade'))),
+            '#empty_option' => t('- inherit -'),
+            '#default_value' => isset($sublayer->properties->slidedirection) ? $sublayer->properties->slidedirection : NULL,
+            '#prefix' => '<td>',
+            '#suffix' => '</td>',
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['properties']['durationin'] = array(
+            '#type' => 'textfield',
+            '#title' => t('Duration in'),
+            '#field_suffix' => t('ms', array(), array('context' => 'milliseconds')),
+            '#size' => 6,
+            '#default_value' => isset($sublayer->properties->durationin) ? $sublayer->properties->durationin : '',
+            '#prefix' => '<td>',
+            '#suffix' => '</td>',
+            '#element_validate' => array(
+              'layerslider_validate_integer',
+              'layerslider_validate_positive'
+            ),
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['properties']['easingin'] = array(
+            '#type' => 'select',
+            '#title' => t('Easing in'),
+            '#options' => $easings,
+            '#empty_option' => t('- inherit -'),
+            '#default_value' => isset($sublayer->properties->easingin) ? $sublayer->properties->easingin : NULL,
+            '#prefix' => '<td>',
+            '#suffix' => '</td>',
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['properties']['delayin'] = array(
+            '#type' => 'textfield',
+            '#title' => t('Delay in'),
+            '#field_suffix' => t('ms', array(), array('context' => 'milliseconds')),
+            '#size' => 6,
+            '#default_value' => isset($sublayer->properties->delayin) ? $sublayer->properties->delayin : '',
+            '#prefix' => '<td>',
+            '#suffix' => '</td><td></td></tr><tr><td>' . t('Out', array(), array('context' => 'animation')) . '</td>',
+            '#element_validate' => array(
+              'layerslider_validate_integer',
+              'layerslider_validate_positive'
+            ),
+          );
+
+          // The rotate and scale properties are only working with jQuery 1.8 but some parts of
+          // Drupal UI breaks if we enable anything higher than 1.7 (due to curCSS deprecating)
+
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['properties']['slideoutdirection'] = array(
+            '#type' => 'select',
+            '#title' => t('Slide out direction'),
+            '#options' => array_merge($directions, array('fade' => t('Fade'))),
+            '#empty_option' => t('- inherit -'),
+            '#default_value' => isset($sublayer->properties->slideoutdirection) ? $sublayer->properties->slideoutdirection : NULL,
+            '#prefix' => '<td>',
+            '#suffix' => '</td>',
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['properties']['durationout'] = array(
+            '#type' => 'textfield',
+            '#title' => t('Duration out'),
+            '#field_suffix' => t('ms', array(), array('context' => 'milliseconds')),
+            '#size' => 6,
+            '#default_value' => isset($sublayer->properties->durationout) ? $sublayer->properties->durationout : '',
+            '#prefix' => '<td>',
+            '#suffix' => '</td>',
+            '#element_validate' => array(
+              'layerslider_validate_integer',
+              'layerslider_validate_positive'
+            ),
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['properties']['easingout'] = array(
+            '#type' => 'select',
+            '#title' => t('Easing out'),
+            '#options' => $easings,
+            '#empty_option' => t('- inherit -'),
+            '#default_value' => isset($sublayer->properties->easingout) ? $sublayer->properties->easingout : NULL,
+            '#prefix' => '<td>',
+            '#suffix' => '</td>',
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['properties']['delayout'] = array(
+            '#type' => 'textfield',
+            '#title' => t('Delay out'),
+            '#field_suffix' => t('ms', array(), array('context' => 'milliseconds')),
+            '#size' => 6,
+            '#default_value' => isset($sublayer->properties->delayout) ? $sublayer->properties->delayout : '',
+            '#prefix' => '<td>',
+            '#suffix' => '</td>',
+            '#element_validate' => array(
+              'layerslider_validate_integer',
+              'layerslider_validate_positive'
+            ),
+          );
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['properties']['showuntil'] = array(
+            '#type' => 'textfield',
+            '#title' => t('Show until'),
+            '#size' => 6,
+            '#default_value' => isset($sublayer->properties->showuntil) ? $sublayer->properties->showuntil : '',
+            '#field_suffix' => t('ms', array(), array('context' => 'milliseconds'), array(), array('context' => 'milliseconds')),
+            '#prefix' => '<td>',
+            '#suffix' => '</td></tr>',
+            '#element_validate' => array(
+              'layerslider_validate_integer',
+              'layerslider_validate_positive'
+            ),
+          );
+
+          $form['layers'][$layer_index]['sublayers'][$sublayer_index]['remove'] = array(
+            '#type' => 'submit',
+            '#value' => t('Remove element'),
+            '#name' => "layer-{$layer_index}-sublayer-{$sublayer_index}-remove",
+            '#submit' => array('layerslider_sublayer_remove'),
+            '#limit_validation_errors' => array(),
+            '#ajax' => array(
+              'callback' => 'layerslider_sublayer_callback',
+              'wrapper' => "layer-{$layer_index}-wrapper",
+            ),
+          );
+        }
+      }
+
+      $form['layers'][$layer_index]['remove'] = array(
+        '#type' => 'submit',
+        '#value' => t('Remove slide'),
+        '#name' => "layer-{$layer_index}-remove",
+        '#submit' => array('layerslider_layer_remove'),
+        '#limit_validation_errors' => array(),
+        '#ajax' => array(
+          'callback' => 'layerslider_layer_callback',
+          'wrapper' => "layer-wrapper",
+        ),
+        '#weight' => 11,
+      );
+    }
+  }
+
+  $form['id'] = array(
+    '#type' => 'hidden',
+    '#value' => $slider->id
+  );
+
+  $form['layer_create'] = array(
+    '#type' => 'submit',
+    '#value' => t('Add slide'),
+    '#name' => "layer-create",
+    '#submit' => array('layerslider_layer_create'),
+    '#limit_validation_errors' => array(),
+    '#ajax' => array(
+      'callback' => 'layerslider_layer_callback',
+      'wrapper' => "layer-wrapper",
+    ),
+  );
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Save'),
+    '#weight' => 100,
+  );
+
+  if ($slider->id) {
+    $form['delete'] = array(
+      '#type' => 'submit',
+      '#value' => t('Delete'),
+      '#submit' => array('layerslider_redirect_delete'),
+      '#weight' => 200,
+    );
+  }
+
+  return $form;
+}
+
+/**
+ * Validate handler for layerslider_form().
+ *
+ * This is just a wrapper. Validation is done with #element_validate.
+ *
+ * @see layerslider_validate_integer()
+ * @see layerslider_validate_numeric()
+ * @see layerslider_validate_positive()
+ */
+function layerslider_form_validate($form, &$form_state) {
+}
+
+/**
+ * Helper function for validating properties. Checks for hexadecimal color notation.
+ */
+function layerslider_validate_color($element, &$form_state, $form) {
+  if (!empty($element['#value'])) {
+
+    // Remove preceding #
+    $element['#value'] = str_replace('#', '', $element['#value']);
+
+    if (!preg_match('/([a-f]|[A-F]|[0-9]){3}(([a-f]|[A-F]|[0-9]){3})?\b/', $element['#value'])) {
+      form_error($element, t('@title is not a valid hexadecimal color.', array('@title' => $element['#title'])));
+    }
+  }
+}
+
+/**
+ * Helper function for validating properties. Checks for integer.
+ */
+function layerslider_validate_integer($element, &$form_state, $form) {
+  if (!empty($element['#value'])) {
+    // Check that value contains only digits. Remove possible minus sign.
+    if (!ctype_digit(str_replace('-', '', $element['#value']))) {
+      form_error($element, t('@title has to be integer.', array('@title' => $element['#title'])));
+    }
+  }
+}
+
+/**
+ * Helper function for validating properties. Checks for numeric.
+ */
+function layerslider_validate_numeric($element, &$form_state, $form) {
+  if (!empty($element['#value'])) {
+    if (!is_numeric($element['#value'])) {
+      form_error($element, t('@title has to be numeric.', array('@title' => $element['#title'])));
+    }
+  }
+}
+
+/**
+ * Helper function for validating properties. Checks for positive number.
+ */
+function layerslider_validate_positive($element, &$form_state, $form) {
+  if (!empty($element['#value'])) {
+    if ($element['#value'] < 0) {
+      form_error($element, t('@title has to be positive number.', array('@title' => $element['#title'])));
+    }
+  }
+}
+
+/**
+ * Submit handler for layerslider_form()
+ */
+function layerslider_form_submit($form, &$form_state) {
+  // Construct slider object
+  $slider = new stdClass();
+  $slider->id = $form_state['values']['id'];
+  $slider->title = $form_state['values']['settings']['title'];
+
+  // Assign general slider properties to the slider object
+  $slider->properties = new stdClass();
+  foreach ($form_state['values']['settings']['properties'] as $property => $value) {
+    $slider->properties->{$property} = $value;
+  }
+  foreach ($form_state['values']['settings']['table']['properties'] as $property => $value) {
+    $slider->properties->{$property} = $value;
+  }
+
+  // Background
+  $slider->background = 0;
+  if ($file = file_load($form_state['values']['settings']['background'])) {
+    $slider->background = $file->fid;
+  }
+
+  // Layers
+  $slider->layers = array();
+  if (isset($form_state['values']['layers'])) {
+    foreach ($form_state['values']['layers'] as $layer_values) {
+      $layer = new stdClass();
+      $layer->id = $layer_values['id'];
+      $layer->lid = $layer_values['lid'];
+      $layer->title = $layer_values['configuration']['title'];
+      $layer->weight = $layer_values['weight'];
+
+      // Properties
+      $layer->properties = new stdClass();
+      foreach ($layer_values['configuration']['properties'] as $property => $value) {
+        $layer->properties->{$property} = $value;
+      }
+
+      // Background
+      $layer->background = 0;
+      if ($file = file_load($layer_values['configuration']['background'])) {
+        $layer->background = $file->fid;
+      }
+
+      // Sublayers
+      $layer->sublayers = array();
+      if (isset($layer_values['sublayers'])) {
+        foreach ($layer_values['sublayers'] as $sublayer_values) {
+          $sublayer = new stdClass();
+          $sublayer->sid = $sublayer_values['sid'];
+          $sublayer->lid = $sublayer_values['lid'];
+          $sublayer->id = $sublayer_values['id'];
+          $sublayer->title = $sublayer_values['title'];
+          $sublayer->type = $sublayer_values['type'];
+
+          // Content
+          $sublayer->content = new stdClass();
+          foreach ($sublayer_values['content'] as $type => $content) {
+            switch ($type) {
+              case 'image':
+                $sublayer->content->image = new stdClass();
+                $sublayer->content->image->file = 0;
+                if ($file = file_load($content['file'])) {
+                  $sublayer->content->image->file = $file->fid;
+                }
+                break;
+              case 'text':
+                $sublayer->content->text = new stdClass();
+                $sublayer->content->text->content = $content['content']['value'];
+                $sublayer->content->text->format = $content['content']['format'];
+                $sublayer->content->text->color = str_replace('#', '', $content['color']);
+                break;
+              case 'heading':
+                $sublayer->content->heading = new stdClass();
+                $sublayer->content->heading->level = $content['level'];
+                $sublayer->content->heading->value = $content['value'];
+                $sublayer->content->heading->color = str_replace('#', '', $content['color']);
+                break;
+              case 'video':
+                $sublayer->content->video = new stdClass();
+                $sublayer->content->video->url = $content['url'];
+                $sublayer->content->video->width = $content['width'];
+                $sublayer->content->video->height = $content['height'];
+                break;              
+            }
+          }
+
+          // Link
+          $sublayer->content->link = new stdClass();
+          $sublayer->content->link->url = $sublayer_values['link']['url'];
+          $sublayer->content->link->target = $sublayer_values['link']['target'];
+
+          // Position
+          $sublayer->position = new stdClass();
+          foreach ($sublayer_values['position'] as $axis => $value) {
+            $sublayer->position->{$axis} = $value;
+          }
+
+          // Properties
+          $sublayer->properties = new stdClass();
+          foreach ($sublayer_values['properties'] as $property => $value) {
+            $sublayer->properties->{$property} = $value;
+          }
+
+          $layer->sublayers[] = $sublayer;
+        }
+      }
+
+      $slider->layers[] = $layer;
+    }
+  }
+
+  drupal_set_message(t('Slider saved.'));
+
+  layerslider_save($slider);
+
+  // Set redirect
+  $form_state['redirect'][0] = 'admin/structure/layerslider/' . $slider->id;
+
+  // Set redirect to active tab
+  if (isset($form_state['values']['layer_wrapper']['layer_wrapper__active_tab'])) {
+    $form_state['redirect'][1]['fragment'] = $form_state['values']['layer_wrapper']['layer_wrapper__active_tab'];
+  }
+
+}
+
+/**
+ * AJAX callback for creating and removing sublayers
+ */
+function layerslider_sublayer_callback($form, $form_state) {
+  $lid = $form_state['triggering_element']['#parents'][1];
+
+  $commands = array(
+    // Replace preview area
+    ajax_command_replace("div#edit-layers-{$lid}-preview-area", drupal_render($form['layers'][$lid]['preview'])),
+    // Replace sublayers area
+    ajax_command_replace("div#edit-layers-{$lid}-sublayers", drupal_render($form['layers'][$lid]['sublayers'])),
+  );
+
+  // Open newly created sublayer by invoking click() on the collapsible
+  // fieldset title.
+  if ($form_state['triggering_element']['#submit'][0] == 'layerslider_sublayer_create') {
+    $sid = count(element_children($form['layers'][$lid]['sublayers'])) - 1;
+    
+    $selector = "fieldset#edit-layers-{$lid}-sublayers-{$sid} a.fieldset-title:first";
+    $commands[] = ajax_command_invoke($selector, 'click');
+  }
+
+  return array('#type' => 'ajax', '#commands' => $commands);
+}
+
+/**
+ * Submit handler for the "Add element" button (i.e. create sublayer)
+ */
+function layerslider_sublayer_create($form, &$form_state) {
+  $lid = $form_state['triggering_element']['#parents'][1];
+
+  $sublayer = new stdClass();
+  $sublayer->id = NULL;
+  $sublayer->lid = NULL;
+  $sublayer->sid = NULL;
+  $sublayer->title = '';
+  $sublayer->type = 'image';
+  $sublayer->link = new stdClass();
+  $sublayer->link->url = '';
+  $sublayer->link->target = '_self';
+  $sublayer->position = new stdClass();
+  $sublayer->position->x = 0;
+  $sublayer->position->y = 0;
+  $sublayer->position->z = 0;
+  $sublayer->is_new = TRUE;
+  $form_state['slider']->layers[$lid]->sublayers[] = $sublayer;
+
+  $form_state['rebuild'] = TRUE;
+}
+
+/**
+ * Submit handler for the "Remove" button (i.e. remove sublayer)
+ */
+function layerslider_sublayer_remove($form, &$form_state) {
+  $lid = $form_state['triggering_element']['#parents'][1];
+  $sid = $form_state['triggering_element']['#parents'][3];
+
+  unset($form_state['slider']->layers[$lid]->sublayers[$sid]);
+
+  $form_state['rebuild'] = TRUE;
+}
+
+/**
+ * AJAX callback for creating and removing layers
+ */
+function layerslider_layer_callback($form, $form_state) {
+  $commands = array(
+    // Replace the layer area
+    ajax_command_replace("#layer-wrapper", drupal_render($form['layer_wrapper'])),
+  );
+
+  // Open newly created layer by invoking click() on the vertical tab title.
+  if ($form_state['triggering_element']['#submit'][0] == 'layerslider_layer_create') {
+    $lid = count(element_children($form['layers'])) - 1;
+
+    $selector = ".vertical-tab-button:eq({$lid}) a";
+    $commands[] = ajax_command_invoke($selector, 'click');
+  }
+
+  return array('#type' => 'ajax', '#commands' => $commands);
+}
+
+/**
+ * Submit handler for the "Add slide" button (i.e. create layer)
+ */
+function layerslider_layer_create($form, &$form_state) {
+  $layer = new stdClass();
+  $layer->id = NULL;
+  $layer->lid = NULL;
+  $layer->title = '';
+  $layer->weight = 0;
+  $layer->sublayers = array();
+  $form_state['slider']->layers[] = $layer;
+
+  $form_state['rebuild'] = TRUE;
+}
+
+/**
+ * Submit handler for the "Remove" button (i.e. remove layer)
+ */
+function layerslider_layer_remove($form, &$form_state) {
+  $lid = $form_state['triggering_element']['#parents'][1];
+
+  unset($form_state['slider']->layers[$lid]);
+
+  $form_state['rebuild'] = TRUE;
+}
+
+/**
+ * Form deletion handler. Redirects to the delete form.
+ */
+function layerslider_redirect_delete($form , &$form_state) {
+  $form_state['redirect'] = array(
+    'admin/structure/layerslider/' . $form_state['slider']->id . '/delete',
+  );
+}
+
+/**
+ * Slider delete form
+ */
+function layerslider_delete_form($form, &$form_state, $slider = NULL) {
+  $form_state['slider'] = $slider;
+  
+  return confirm_form(
+    $form, 
+    t('Are you sure you want to delete <em>@title</em>?', array('@title' => $slider->title)), 
+    'admin/structure/layerslider/' . $slider->id
+  );
+}
+
+/**
+ * Submit handler for layerslider_delete_form().
+ */
+function layerslider_delete_form_submit($form, &$form_state) {
+  $slider = $form_state['slider'];
+  
+  layerslider_delete($slider);
+
+  $form_state['redirect'] = 'admin/structure/layerslider';
+
+  drupal_set_message(t('Slider deleted.'));
+}
+
+/**
+ * Implements hook_theme().
+ */
+function layerslider_theme() {
+  return array(
+    'layerslider_slider'  => array(
+      'render element' => 'slider',
+      'template' => 'layerslider-slider',
+    ),
+  );
+}
+
+/**
+ * Preprocess variables for layerslider-slider.tpl.php
+ */
+function template_preprocess_layerslider_slider(&$variables) {
+  $slider = $variables['slider']['#slider'];
+
+  // Make variables easier to access in the template file
+  $variables['id'] = $slider->id;
+  $variables['height'] = $slider->properties->height;
+  $variables['width'] = $slider->properties->width;
+  $variables['layers'] = array();
+
+  if (isset($slider->layers)) {
+    foreach ($slider->layers as $lid => $layer) {
+      // Create rel parameter
+      $rel = '';
+      foreach ($layer->properties as $property => $value) {
+        // Do not output parameters that match slider parameters
+        if ($value != $slider->properties->{$property} && !empty($value)) {
+          $rel .= "{$property}: $value;";
+        }
+      }
+
+      $variables['layers'][$lid] = array(
+        'rel' => $rel,
+        'sublayers' => array(),
+      );
+
+      // Background
+      if (isset($layer->background) && $background = file_load($layer->background)) {
+        $markup = theme_image(array(
+          'path' => file_create_url($background->uri),
+          'attributes' => array(
+            'class' => array('ls-bg'),
+          ),
+        ));
+        $variables['layers'][$lid]['sublayers'][] = $markup;
+      }
+
+      $i = 2;
+      if (isset($layer->sublayers)) {
+        foreach ($layer->sublayers as $sid => $sublayer) {
+          $build = array();
+
+          // Create rel parameter
+          $rel = '';
+          foreach ($sublayer->properties as $property => $value) {
+            if (strlen($value) > 0) {
+              $rel .= "{$property}: $value;";
+            }
+          }
+
+          // Render content
+          if (isset($sublayer->content->{$sublayer->type})) {
+            $content = $sublayer->content->{$sublayer->type};
+            switch ($sublayer->type) {
+              case 'image':
+                if (isset($content->file) && $image = file_load($content->file)) {
+                  $build = array(
+                    '#theme' => 'image',
+                    '#path' => file_create_url($image->uri),
+                    '#attributes' => array(
+                      'class' => array('ls-s' . $i),
+                      'style' => "left:{$sublayer->position->x}px;top:{$sublayer->position->y}px;z-index:{$sublayer->position->z};",
+                      'rel' => $rel,
+                    ),
+                  );
+                }
+                break;
+              case 'text':
+                if (isset($content->content) && !empty($content->content)) {
+                  $color = 'FFFFFF';
+                  if (isset($content->color) && !empty($content->color)) {
+                    $color = $content->color;
+                  }
+
+                  $build = array(
+                    '#type' => 'html_tag',
+                    '#tag' => 'div',
+                    '#value' => check_markup($content->content, $content->format),
+                    '#attributes' => array(
+                      'class' => array('ls-s' . $i),
+                      'style' => "left:{$sublayer->position->x}px;top:{$sublayer->position->y}px;z-index:{$sublayer->position->z};color:#{$color};",
+                      'rel' => $rel,
+                    ),
+                  );
+                }
+                break;
+              case 'heading':
+                if (isset($content->value) && strlen($content->value) > 0) {
+                  $color = 'FFFFFF';
+                  if (isset($content->color) && !empty($content->color)) {
+                    $color = $content->color;
+                  }
+
+                  $build = array(
+                    '#type' => 'html_tag',
+                    '#tag' => $content->level,
+                    '#value' => $content->value,
+                    '#attributes' => array(
+                      'class' => array('ls-s' . $i),
+                      'style' => "left:{$sublayer->position->x}px;top:{$sublayer->position->y}px;z-index:{$sublayer->position->z};color:#{$color}",
+                      'rel' => $rel,
+                    ),
+                  );
+                }
+                break;
+              case 'video':
+                // Check which the source is
+                if (!empty($content->url)) {
+                  if (strpos($content->url, 'youtube') !== FALSE) {
+                    $components = parse_url($content->url);
+                    parse_str($components['query'], $query);
+                    $url = $components['scheme'] . '://' . $components['host'] . '/embed/' . $query['v'] . '?wmode=opaque';
+                    $iframe = "<iframe width='{$content->width}' height='{$content->height}' src='{$url}' frameborder='0' allowfullscreen></iframe>";
+                  }
+                  elseif (strpos($content->url, 'vimeo') !== FALSE) {
+                    $components = parse_url($content->url);
+                    $url = $components['scheme'] . '://player.vimeo.com/video' . $components['path'];
+                    $iframe = "<iframe src='{$url}' width='{$content->width}' height='{$content->height}' frameborder='0' webkitAllowFullScreen mozallowfullscreen allowFullScreen></iframe>";
+                  }
+
+                  if (isset($iframe)) {
+                    $build = array(
+                      '#type' => 'html_tag',
+                      '#tag' => 'div',
+                      '#attributes' => array(
+                        'class' => array('ls-s' . $i),
+                        'style' => "left:{$sublayer->position->x}px;top:{$sublayer->position->y}px;z-index:{$sublayer->position->z};",
+                        'rel' => $rel,
+                      ),
+                      '#value' => $iframe,
+                    );
+                  }
+                }
+                break;
+            }
+
+            // If sublayer doesn't have content, continue to the next one
+            if (!isset($build) || empty($build)) {
+              continue;
+            }
+
+            // Wrap image or text into anchor if the URL is set
+            if (!empty($sublayer->content->link->url) && in_array($sublayer->type, array('text', 'image'))) {
+              $attributes = $build['#attributes'];
+              $attributes['target'] = $sublayer->content->link->target;
+              unset($build['#attributes']);
+              $build = l(
+                drupal_render($build), 
+                $sublayer->content->link->url, 
+                array(
+                  'html' => TRUE,
+                  'attributes' => $attributes,
+                )
+              );
+            }
+
+            $variables['layers'][$lid]['sublayers'][$sid] = $build;
+          }
+
+          $i++;
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_block_info().
+ */
+function layerslider_block_info() {
+  $blocks = array();
+
+  // Get all sliders and create blocks for them
+  $sliders = layerslider_load_multiple();
+  if (!empty($sliders)) {
+    foreach ($sliders as $slider) {
+      $blocks[$slider->id] = array(
+        'info' => t('LayerSlider: @title', array('@title' => $slider->title)),
+      );
+    }
+  }
+
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function layerslider_block_view($delta = '') {
+  // $delta parameter is $slider->id
+  $slider = layerslider_load($delta);
+
+  if (!$slider) {
+    return array();
+  }
+
+  $settings['layerslider']["layerslider-{$slider->id}"] = array(
+    'responsive' => $slider->properties->responsive,
+    'autoStart' => $slider->properties->autoStart,
+    'autoPlayVideos' => $slider->properties->autoPlayVideos,
+    'pauseOnHover' => $slider->properties->pauseOnHover,
+    'keybNav' => $slider->properties->keybNav,
+    'navStartStop' => $slider->properties->navStartStop,
+    'navPrevNext' => $slider->properties->navPrevNext,
+    'navButtons' => $slider->properties->navButtons,
+    'showBarTimer' => $slider->properties->showBarTimer,
+    'slideDirection' => $slider->properties->slidedirection,
+    'slideDelay' => (int) $slider->properties->slidedelay,
+    'durationIn' => (int) $slider->properties->durationin,
+    'easingIn' => $slider->properties->easingin,
+    'delayIn' => (int) $slider->properties->delayin,
+    'durationOut' => (int) $slider->properties->durationout,
+    'easingOut' => $slider->properties->easingout,
+    'delayOut' => (int) $slider->properties->delayout,
+  );
+
+  // Global BG
+  $global_bg = FALSE;
+  if (isset($slider->background) && $file = file_load($slider->background)) {
+    $global_bg = file_create_url($file->uri);
+  }
+  $settings['layerslider']["layerslider-{$slider->id}"]['globalBGImage'] = $global_bg;
+
+  drupal_add_js($settings, 'setting');
+
+  $block['subject'] = '';
+  $block['content'] = array(
+    '#theme' => 'layerslider_slider',
+    '#slider' => $slider,
+    '#contextual_links' => array(
+      'layerslider' => array(
+        'admin/structure/layerslider',
+        array($slider->id),
+      ),
+    ),
+  );
+
+  return $block;
+}

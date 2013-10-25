@@ -1,0 +1,237 @@
+<?php
+
+/**
+ * @file
+ * Implements Exchange theme functionality.
+ */
+ 
+/**
+ * Implements hook_theme().
+ */
+function exchange_module_theme() {
+  return array(
+    'exchange_image_slider_formatter' => array(
+      'variables' => array('item' => NULL, 'image_style' => NULL, 'controller' => TRUE),
+    ),
+  );
+}
+
+/**
+ * Returns HTML for an image slider field formatter.
+ *
+ * @param $variables
+ *   An associative array containing:
+ *   - item: Associative array of image data, which may include "uri", "alt",
+ *     "width", "height", "title" and "attributes".
+ *   - image_style: An optional image style.
+ *
+ * @ingroup themeable
+ */
+function theme_exchange_image_slider_formatter($variables) {
+  $item = $variables['item'];
+  $image = array(
+    'path' => $item['uri'],
+  );
+
+  if (array_key_exists('alt', $item)) {
+    $image['alt'] = $item['alt'];
+  }
+
+  if (isset($item['attributes'])) {
+    $image['attributes'] = $item['attributes'];
+  }
+
+  if (isset($item['width']) && isset($item['height'])) {
+    $image['width'] = $item['width'];
+    $image['height'] = $item['height'];
+  }
+
+  // Do not output an empty 'title' attribute.
+  if (isset($item['title']) && drupal_strlen($item['title']) > 0) {
+    $image['title'] = $item['title'];
+  }
+
+  if ($variables['image_style']) {
+    $image['style_name'] = $variables['image_style'];
+    $output = theme('image_style', $image);
+  }
+  else {
+    $output = theme('image', $image);
+  }
+
+  return $output;
+}
+
+ 
+/**
+ * Implementation of hook_field_formatter_info()
+ */
+function exchange_module_field_formatter_info() {
+	return array(
+    'exchange_image_slider' => array(
+      'label' => t('Exchange Image Slider'),
+      'field types' => array('image'),
+      'settings' => array('image_style' => '', 'controller' => TRUE),
+    ),
+  );
+}
+
+/**
+ * Implements hook_field_formatter_settings_form().
+ */
+function exchange_module_field_formatter_settings_form($field, $instance, $view_mode, $form, &$form_state) {
+  $display = $instance['display'][$view_mode];
+  $settings = $display['settings'];
+
+  $image_styles = image_style_options(FALSE);
+  $element['image_style'] = array(
+    '#title' => t('Image style'),
+    '#type' => 'select',
+    '#default_value' => $settings['image_style'],
+    '#empty_option' => t('None (original image)'),
+    '#options' => $image_styles,
+  );
+  $element['controller'] = array(
+    '#title' => t('Next and previous buttons'),
+    '#type' => 'checkbox',
+    '#default_value' => $settings['controller'],
+  );
+
+  return $element;
+}
+
+/**
+ * Implements hook_field_formatter_settings_summary().
+ */
+function exchange_module_field_formatter_settings_summary($field, $instance, $view_mode) {
+  $display = $instance['display'][$view_mode];
+  $settings = $display['settings'];
+
+  $summary = array();
+
+  $image_styles = image_style_options(FALSE);
+  // Unset possible 'No defined styles' option.
+  unset($image_styles['']);
+  // Styles could be lost because of enabled/disabled modules that defines
+  // their styles in code.
+  if (isset($image_styles[$settings['image_style']])) {
+    $summary[] = t('Image style: @style', array('@style' => $image_styles[$settings['image_style']]));
+  }
+  else {
+    $summary[] = t('Original image');
+  }
+  
+  if ($settings['controller'] == TRUE) {
+    $summary[] = t('Controller');
+  } else {
+    $summary[] = t('No controller');
+  }
+
+  return implode('<br />', $summary);
+}
+
+/**
+ * Implements hook_theme_registry_alter().
+ */
+function exchange_module_theme_registry_alter(&$theme_registry) {
+  $theme_registry['field']['function'] = 'exchange_module_field';
+}
+
+/**
+ * Override theme_field()
+ */
+function exchange_module_field($variables) {
+  // Use default theming function for everything else than image slider
+  if ($variables['element']['#formatter'] != 'exchange_image_slider') {
+    return theme_field($variables);
+  }
+  $output = '';
+  // Render the label, if it's not hidden.
+  if (!$variables['label_hidden']) {
+    $output .= '<div class="field-label"' . $variables['title_attributes'] . '>' . $variables['label'] . ':&nbsp;</div>';
+  }
+
+  // Do not use slider if there is only one image
+  $item_count = count($variables['items']);
+  if ($item_count > 1) {
+    $output .= '<div id="' . $variables['field_name_css'] . '" class="carousel slide">';
+    $output .= '<div class="carousel-inner">';
+  }
+  
+  // Render the items.
+  foreach ($variables['items'] as $delta => $item) {
+    $output .= '<div class="item ' . ($delta == 0 ? 'active' : '') . '"' . $variables['item_attributes'][$delta] . '>' . drupal_render($item) . '</div>';
+  }
+  
+  // Do not use slider if there is only one image
+  if ($item_count > 1) {
+    $output .= '</div>';
+    
+    // Add slider controller
+    if ($variables['element']['#controller'] == TRUE) {
+      $output .= '<a class="carousel-control left" href="#' . $variables['field_name_css'] . '" data-slide="prev">&lsaquo;</a>';
+      $output .= '<a class="carousel-control right" href="#' . $variables['field_name_css'] . '" data-slide="next">&rsaquo;</a>';
+    }
+    $output .= '</div>';
+  }
+
+  // Render the top-level DIV.
+  $output = '<div class="' . $variables['classes'] . '"' . $variables['attributes'] . '>' . $output . '</div>';
+
+  return $output;
+}
+
+/**
+ * Implements hook_field_formatter_view().
+ */
+function exchange_module_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
+  $element = array();
+  
+  $element['#controller'] = FALSE;
+  if ($display['settings']['controller'] == 1) {
+    $element['#controller'] = TRUE;
+  }
+
+  foreach ($items as $delta => $item) {
+    $element[$delta] = array(
+      '#theme' => 'exchange_image_slider_formatter',
+      '#item' => $item,
+      '#image_style' => $display['settings']['image_style'],
+    );
+  }
+
+  return $element;
+}
+
+/**
+ * Implementation of hook_views_api()
+ */
+function exchange_module_views_api() {
+  return array(
+    'api' => 3, 
+    'path' => drupal_get_path('module', 'exchange_module') . '/includes/views', 
+  );
+}
+
+/**
+ * Implements hook_views_plugins
+ */
+function exchange_module_views_plugins() {
+  $js_path = drupal_get_path('module', 'ctools') . '/js';
+  $plugins = array(
+    'style' => array(
+      'exchange_scroller' => array(
+        'title' => t('Exchange Carousel'),
+        'help' => t('Displays rows in Exchange scroller.'),
+        'handler' => 'views_plugin_style_xe_scroller',
+        'theme' => 'views_view_xe_scroller',
+        'uses row plugin' => TRUE,
+        'uses row class' => TRUE,
+        'uses options' => TRUE,
+        'type' => 'normal',
+      ),
+    ),
+  );
+
+  return $plugins;
+}

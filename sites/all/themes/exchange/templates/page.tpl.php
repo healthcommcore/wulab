@@ -1,9 +1,10 @@
 <?php
 ?>
+<div id="page" class="container">
 <header id="top">
 		<div class="row">
 		<div class="container">
-			<div id="branding" class="<?php echo !$page['header'] ? 'span12' : 'span7'; ?>">
+			<div id="branding" >
 				<?php if ($logo): ?>
 					<a href="<?php print $front_page; ?>" title="<?php print t('Home'); ?>" rel="home" id="logo">
 						<img src="<?php print $logo; ?>" alt="<?php print t('Home'); ?>" />
@@ -58,7 +59,6 @@
 	</nav>
 
 
-<div id="page" class="container">
 	<?php if (render($page['topbar_left']) || render($page['topbar_right']) || $secondary_menu): ?>
 		<div id="topbar">
 			<div class="row">
@@ -80,15 +80,16 @@
 	
 	
 	<div id="main">
+		<div class="row">
 		<?php if ($page['featured']): ?>
-			<div class="row">
 					<div id="featured" class="span12">
 						<?php print render($page['featured']); ?>
 					</div> <!-- /#featured -->
-			</div>
 		<?php endif; ?>
 		
-<div class="row <?php echo ($page['home_news'] || $page['home_buttons']) ? 'home_area' : ''; ?>">
+<?php if($page['home_news'] || $page['home_buttons']): ?>
+	<div id="home_area" class="span12">
+		<div class="row">
 			<?php if ($page['home_news']): ?>
 				<div id="home_news" class="span3">
 					<?php print render($page['home_news']); ?>
@@ -99,6 +100,9 @@
 					<?php print render($page['home_buttons']); ?>
 				</div>
 			<?php endif; ?>
+	</div>
+</div>
+<?php endif; ?>
 			<?php if(!drupal_is_front_page()) : ?>
 			<?php if ($page['sidebar_first']): ?>
 				<div class="span3 visible-desktop">
@@ -172,7 +176,6 @@
 			<?php endif; ?>
 		</div>
 	</div>
-</div>
 	
     <footer>
 			<div class="container">
@@ -205,3 +208,4 @@
       <?php endif; ?>
 			</div>
     </footer>
+</div>

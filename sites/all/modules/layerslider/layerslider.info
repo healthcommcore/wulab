@@ -1,0 +1,6 @@
+name = LayerSlider
+description = LayerSlider is a jQuery content slider. This module provides admin interface and blocks for convenient LayerSlider management.
+core = 7.x
+version = 7.x-1.0.4
+
+dependencies[] = jquery_update

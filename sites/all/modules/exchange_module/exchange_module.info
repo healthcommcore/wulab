@@ -1,0 +1,6 @@
+name = Exchange
+description = Enhances Exchange theme functionality by providing field formatters, content types and such.
+core = 7.x
+
+files[] = includes/views/views_plugin_style_xe_scroller.inc
+files[] = includes/views/views_plugin_row_xe_portfolio_fields.inc

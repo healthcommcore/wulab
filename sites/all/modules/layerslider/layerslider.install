@@ -1,0 +1,189 @@
+<?php
+/**
+ * @file
+ * Install for a slider entity
+ */
+
+/**
+ * Implements hook_schema().
+ */
+function layerslider_schema() {
+  $schema = array();
+
+  $schema['layerslider_slider'] = array(
+    'description' => 'The base table for the slider entity.',
+    'fields' => array(
+      'id' => array(
+        'description' => 'Primary key of the slider entity.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'bundle_type' => array(
+        'description' => 'The type (bundle) of this slider.',
+        'type' => 'varchar',
+        'length' => 32,
+        'not null' => TRUE,
+        'default' => 'standalone',
+      ),
+      'title' => array(
+        'description' => 'The title of this slider, always treated as non-markup plain text.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'created' => array(
+        'description' => 'The Unix timestamp when the slider was created.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'changed' => array(
+        'description' => 'The Unix timestamp when the slider was most recently saved.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'background' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => "Foreign key: {file_managed}.fid of slider's background.",
+      ),
+      'properties' => array(
+        'description' => 'The properties of this slider, JSON encoded.',
+        'type' => 'blob',
+        'size' => 'big',
+        'serialize' => FALSE,
+      ),
+    ),
+    'primary key' => array('id'),
+    'foreign keys' => array(
+      'background' => array(
+        'table' => 'file_managed',
+        'columns' => array('background' => 'fid'),
+      ),
+    ),
+  );
+  $schema['layerslider_layer'] = array(
+    'description' => 'The table for slider layers',
+    'fields' => array(
+      'lid' => array(
+        'description' => 'Primary key of the layer.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'id' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => "Foreign key: {layerslider_slider}.id of the slider the layer belongs to.",
+      ),
+      'weight' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => "Layer weight among layers in the same slider at the same depth.",
+      ),
+      'title' => array(
+        'description' => 'The title of this layer, always treated as non-markup plain text.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'background' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => "Foreign key: {file_managed}.fid of layer's background.",
+      ),
+      'properties' => array(
+        'description' => 'The properties of this layer, JSON encoded.',
+        'type' => 'blob',
+        'size' => 'big',
+        'serialize' => FALSE,
+      ),
+    ),
+    'primary key' => array('lid'),
+    'foreign keys' => array(
+      'slider' => array(
+        'table' => 'layerslider_slider',
+        'columns' => array('id' => 'id'),
+      ),
+      'background' => array(
+        'table' => 'file_managed',
+        'columns' => array('background' => 'fid'),
+      ),
+    ),
+  );
+  $schema['layerslider_sublayer'] = array(
+    'description' => 'The table for slider sublayers',
+    'fields' => array(
+      'sid' => array(
+        'description' => 'Primary key of the sublayer.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'lid' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => "Foreign key: {layerslider_layer}.lid of the layer the sublayer belongs to.",
+      ),
+      'id' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => "Foreign key: {layerslider_slider}.id of the slider the sublayer belongs to.",
+      ),
+      'type' => array(
+        'description' => 'The type  of this sublayer.',
+        'type' => 'varchar',
+        'length' => 32,
+        'not null' => TRUE,
+        'default' => 'image',
+      ),
+      'title' => array(
+        'description' => 'The title of this sublayer, always treated as non-markup plain text.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'position' => array(
+        'description' => 'The position of this sublayer.',
+        'type' => 'blob',
+        'serialize' => FALSE,
+      ),
+      'content' => array(
+        'description' => 'The content of this sublayer.',
+        'type' => 'blob',
+        'size' => 'big',
+        'serialize' => FALSE,
+      ),
+      'properties' => array(
+        'description' => 'The properties of this sublayer.',
+        'type' => 'blob',
+        'size' => 'big',
+        'serialize' => FALSE,
+      ),
+    ),
+    'primary key' => array('sid'),
+    'foreign keys' => array(
+      'layer' => array(
+        'table' => 'layerslider_layer',
+        'columns' => array('lid' => 'lid'),
+      ),
+      'slider' => array(
+        'table' => 'layerslider_slider',
+        'columns' => array('id' => 'id'),
+      ),
+    ),
+  );
+
+  return $schema;
+}

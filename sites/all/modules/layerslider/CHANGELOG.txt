@@ -1,0 +1,23 @@
+1.0
+- Initial commit
+
+1.0.1
+- Cleaned code
+- Added bar timer option
+- Updated layerslider.css to newer version
+- Added responsive option
+- Improved UI
+- Added element sorting
+- Added heading elements
+
+1.0.2
+- Added edit and delete links to the slider administration table
+- Cleaned code to comply with Drupal coding standards
+- Reordering sublayers will change z-indexes on the preview area
+- Fixed the layer ordering bug
+
+1.0.3
+- Fixed bugs
+
+1.0.4
+- Fixed PHP coding standard issues, notices were thrown on E_STRICT reporting

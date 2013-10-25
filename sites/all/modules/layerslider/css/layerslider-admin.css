@@ -1,0 +1,78 @@
+fieldset.sublayer .handle,
+#layer-wrapper .vertical-tab-button a .handle {
+  background-image:url('../images/draggable.png');
+  background-repeat:no-repeat;
+  background-position:left top;
+  cursor:move;
+  display:inline-block;
+  height:13px;
+  margin:0 10px 0 0;
+  width:13px;
+}
+
+fieldset.sublayer .handle:hover,
+#layer-wrapper .vertical-tab-button a .handle:hover {
+  background-image:url('../images/draggable-hover.png');
+}
+
+fieldset.sublayer {
+  position:relative;
+}
+
+fieldset.sublayer .handle {
+  position: absolute;
+  top:9px;
+  right:0;
+}
+
+#layerslider-form .vertical-tabs input {
+  width:auto;
+}
+
+#layerslider-form table.property-table input.form-text {
+  width:auto;
+}
+
+#layerslider-form table.property-table .form-item {
+  padding:0;
+  margin:0;
+}
+
+#layerslider-form table.property-table .form-item label {
+  display:none;
+}
+
+.vertical-tabs-pane .fieldset-wrapper > div.preview-area,
+.preview-area {
+  background-repeat:no-repeat;
+  background-position:center center;
+  position:relative;
+  border:2px dashed #ccc;
+  overflow:hidden;
+  padding:0;
+}
+
+.preview-area img {
+  display:block;
+}
+
+.preview-area p {
+  margin: 0 0 18px;
+}
+
+.preview-area .sublayer-overlay {
+  cursor:move;
+  height:100%;
+  left:0;
+  position:absolute;
+  top:0;
+  width:100%;
+}
+
+.preview-area .sublayer.active .sublayer-overlay {
+  border:1px dashed #ff0000;
+ }
+
+.preview-area .button {
+  display:block;
+}
