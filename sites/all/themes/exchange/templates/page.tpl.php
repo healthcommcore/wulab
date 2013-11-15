@@ -112,6 +112,7 @@
 				</div>
 			<?php endif; ?>
 			<section id="main-content" class="<?php echo ($page['sidebar_first']) ? 'span8' : 'span12'; ?>">
+				<div class="main-padding">
 				<?php if (($title && !$hide_title) || render($tabs) || render($breadcrumb)) : ?>
 					<header class="content clearfix">
 						<?php if ($breadcrumb): ?>
@@ -161,6 +162,7 @@
 					</ul>
 				<?php endif; ?>
 				<?php print render($page['content']); ?>
+			</div>
 			</section>
 			<?php endif; ?>
 			
