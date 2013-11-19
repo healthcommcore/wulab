@@ -77,8 +77,8 @@
 			</div>
 		</div>
 	<?php endif; ?>
-	
-	
+
+<div id="page" class="container">
 	<div id="main">
 		<div class="row">
 		<?php if ($page['featured']): ?>
@@ -178,6 +178,7 @@
 			<?php endif; ?>
 		</div>
 	</div>
+</div><!-- page -->
 	
     <footer>
 			<div class="container">
