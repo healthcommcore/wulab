@@ -295,15 +295,6 @@ header#top {
 	float:right;
 }
 
-@media (max-width:1025px){
-	#topbar {
-		padding:0 20px;
-	}
-
-	#branding {
-		margin-bottom:20px;
-	}
-}
 
 /* ----- =Menus ----- */
 
@@ -413,6 +404,24 @@ nav ul {
 #secondary-menu a:hover {
 	text-decoration:none;
 }
+
+/* TABLET */
+@media (max-width:1025px){
+	#topbar {
+		padding:0 20px;
+	}
+
+	#branding {
+		margin-bottom:20px;
+	}
+	#home_area{min-height:130px;}
+	#home_buttons{padding:15px 20px 1000px 20px; margin-left:-20px;}
+	.home_message h1{color:#fff; font-size:1.4em; margin:10px 0 13px 0;}
+	#home_news{font-size:0.8em;}
+	#home_news h3{margin-bottom:6px;}
+	#home_news p{line-height:1.4em;}
+}
+
 
 /* Responsive navigation */
 	#main-menu.select-menu ul,
