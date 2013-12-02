@@ -1,0 +1,16 @@
+#top, nav, footer, #sidebar, #inside_header, .action_container{display:none;}
+section.span8, #main .span6{width:100%;}
+#main article .span6{width:95%;}
+#main-content{margin-top:20px;}
+body, h1, h2, h3, h4, strong, em, .headline, .project_aside, #home_buttons{font-family:Times, serif !important;}
+.headline{color:#000;}
+body, .headline{font-size:13pt;}
+strong{font-weight:bold;}
+h1{font-size:30pt;}
+h1#page-title{border-bottom:none; color:black; margin-bottom:12px;}
+a:link:after, a:visited:after, a:link:before, a:visited:before{content:"";}
+article{margin:0;}
+/*.home_message{margin:0; position:relative;}*/
+#home_news, #home_buttons{padding-bottom:0; margin-bottom:0;}
+body:before{content:'Center for Work, Health, and Well-being'; font-size:10pt; font-family:Arial, Helvetica, sans-serit;}
+#top .span4{margin-left:0;}
