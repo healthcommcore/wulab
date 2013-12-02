@@ -19,13 +19,13 @@
   <?php print $page_bottom; ?>
 <!-- Popup window for external links -->
 <script>
-(function(){
-	var extLinks = document.getElementsByClassName('popup');
-	var width = window.outerWidth / 1.5;
-	var height = window.outerHeight / 1.5;
+(function($){
+	var extLinks = $('.popup');
+	var width = $(window).width() / 1.5;
+	var height = $(window).height();
 	var xPos = window.screenX + (window.outerWidth - width) / 2;
 	var yPos = window.screenY + (window.outerHeight - height) / 2;;
-	var options = "menubar=yes,toolbar=yes,status=yes,location=yes," + 
+	var options = "resizable=yes,menubar=yes,toolbar=yes,status=yes,location=yes," + 
 		"height=" + height + ",width=" + width + 
 		",top=" + yPos + ",left=" + xPos;
 	for(var i = 0; i < extLinks.length; i++){
@@ -34,7 +34,7 @@
 			return false;
 		}
 	}
-})();
+})(jQuery);
 </script>
 </body>
 </html>
