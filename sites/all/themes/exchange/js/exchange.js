@@ -145,6 +145,28 @@ jQuery(document).ready(function($) {
 		}
 	);
   
+// Hide sidebar and resize main content depending on
+// browser size and if browser window is resized
+	var sidebar = $('#sidebar');
+	//var insideHeader = $('#inside_header');
+	var mainContent = $('#main-content');
+
+	mainContentReflow();
+	$(window).resize(function(){
+		mainContentReflow();
+	});
+
+	function mainContentReflow(){
+		if(sidebar.parent().css('display') == 'none'){
+			//insideHeader.removeClass('span9').addClass('span12');
+			mainContent.removeClass('span8').addClass('span12');
+		}
+		else{
+			//insideHeader.removeClass('span12').addClass('span9');
+			mainContent.removeClass('span12').addClass('span8');
+		}
+	}
+
 	/**
 	 * Dropdown
 	$('#main-menu li.expanded').hover(
