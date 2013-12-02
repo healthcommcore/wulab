@@ -204,8 +204,10 @@ footer {
 }
 
 
+.footer_logos{margin:10px 0 0 0;}
 .footer_logos, .footer_logos img{float:left;}
 .footer_logos img{margin-right:40px;}
+.footer_logos a{display:inline-block; vertical-align:top;}
 .footer_links{float:right; text-align:right;margin-right:0; }
 .footer_links nav ul, .footer_links nav li{list-style-image:none; list-style:none;}
 .footer_links, .footer_links nav a, .footer_links .legal a{color:#CED9E3;}
