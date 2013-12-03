@@ -205,9 +205,8 @@ footer {
 
 
 .footer_logos{margin:10px 0 0 0;}
-.footer_logos, .footer_logos img{float:left;}
-.footer_logos img{margin-right:40px;}
-.footer_logos a{display:inline-block; vertical-align:top;}
+.footer_logos, .footer_logos a{float:left;}
+.footer_logos a{margin-right:40px;}
 .footer_links{float:right; text-align:right;margin-right:0; }
 .footer_links nav ul, .footer_links nav li{list-style-image:none; list-style:none;}
 .footer_links, .footer_links nav a, .footer_links .legal a{color:#CED9E3;}
@@ -430,7 +429,7 @@ nav ul {
 footer .span2{display:none;}
 footer .span4{width:300px;}
 .footer_logos{margin:0;}
-.footer_logos img{margin:0 20px 0 0; width:42%;}
+.footer_logos a{margin:0 20px 0 0; width:42%;}
 }
 
 
