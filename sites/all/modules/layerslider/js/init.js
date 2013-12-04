@@ -31,7 +31,7 @@ jQuery(document).ready(function($) {
         delayOut                : Drupal.settings['layerslider'][id]['delayOut'],
         showCircleTimer         : false, // only works with jQuery 1.8 and up
         showBarTimer            : Drupal.settings['layerslider'][id]['showBarTimer'],
-        thumbnailNavigation     : 'disabled',
+        thumbnailNavigation     : 'disabled'
     });
   });
 });

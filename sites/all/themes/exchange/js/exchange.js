@@ -132,7 +132,7 @@ jQuery(document).ready(function($) {
 			delayIn                 : 0,
 			delayOut                : 0,
 			showCircleTimer					: false,
-			showBarTimer					  : true,
+			showBarTimer					  : true
 	});
   
 	// Show slider controller on hover
